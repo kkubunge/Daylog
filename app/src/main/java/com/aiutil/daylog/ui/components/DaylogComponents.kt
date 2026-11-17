@@ -8,26 +8,37 @@ import android.net.Uri
 import android.os.Build
 import android.util.LruCache
 import android.util.Size
+import android.view.ViewGroup
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
@@ -52,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,11 +77,16 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
@@ -138,180 +155,237 @@ fun PhotoLightboxDialog(
     initialIndex: Int,
     hasGeminiKey: Boolean = false,
     isAnalyzing: Boolean = false,
+    safePadding: PaddingValues = PaddingValues(),
     onAnalyzePhoto: ((DayPhoto) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     if (photos.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val layoutDirection = LocalLayoutDirection.current
     val safeInitial = initialIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeInitial, pageCount = { photos.size })
     val currentPhoto = photos[pagerState.currentPage.coerceIn(0, photos.lastIndex)]
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window
+            if (window != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+                window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                WindowInsetsControllerCompat(window, view).apply {
+                    isAppearanceLightStatusBars = false
+                    isAppearanceLightNavigationBars = false
+                }
+            }
+        }
+
+        // 다이얼로그 인셋과 부모 액티비티 인셋 중 더 큰 값을 써서 하단 내비게이션 바 밖으로 잘리지 않도록 보장
+        val dialogSafe = WindowInsets.safeDrawing.asPaddingValues()
+        val effectiveSafePadding = PaddingValues(
+            start = maxOf(
+                dialogSafe.calculateStartPadding(layoutDirection),
+                safePadding.calculateStartPadding(layoutDirection),
+            ),
+            top = maxOf(
+                dialogSafe.calculateTopPadding(),
+                safePadding.calculateTopPadding(),
+            ),
+            end = maxOf(
+                dialogSafe.calculateEndPadding(layoutDirection),
+                safePadding.calculateEndPadding(layoutDirection),
+            ),
+            bottom = maxOf(
+                dialogSafe.calculateBottomPadding(),
+                safePadding.calculateBottomPadding(),
+            ),
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.95f))
-                .clickable(onClick = onDismiss),
+                .background(Color.Black.copy(alpha = 0.96f)),
         ) {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-            ) { page ->
-                val pagePhoto = photos[page]
-                var fullBitmap by remember(pagePhoto.uri) { mutableStateOf<ImageBitmap?>(null) }
-                LaunchedEffect(pagePhoto.uri) {
-                    fullBitmap = withContext(Dispatchers.IO) {
-                        PhotoImageCache.load(context, pagePhoto.uri, 1600)
-                    }
-                }
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(effectiveSafePadding),
+            ) {
+                // 상단 페이지 표시 & 좌우 이동 버튼 · 닫기 버튼
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
-                    val loaded = fullBitmap
-                    if (loaded != null) {
-                        Image(
-                            bitmap = loaded,
-                            contentDescription = pagePhoto.displayName,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp, vertical = 72.dp),
+                    Surface(
+                        color = Color.White.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(999.dp),
+                    ) {
+                        Text(
+                            text = "${pagerState.currentPage + 1} / ${photos.size}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         )
                     }
-                }
-            }
 
-            // 상단 페이지 표시 & 좌우 이동 버튼 · 닫기 버튼
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-            ) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(999.dp),
-                ) {
-                    Text(
-                        text = "${pagerState.currentPage + 1} / ${photos.size}",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (photos.size > 1) {
-                        IconButton(
-                            onClick = {
-                                val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
-                                scope.launch { pagerState.animateScrollToPage(prev) }
-                            },
-                            enabled = pagerState.currentPage > 0,
-                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                        ) {
-                            Icon(Icons.Default.ChevronLeft, contentDescription = "이전 사진", tint = Color.White)
-                        }
-                        IconButton(
-                            onClick = {
-                                val next = (pagerState.currentPage + 1).coerceAtMost(photos.lastIndex)
-                                scope.launch { pagerState.animateScrollToPage(next) }
-                            },
-                            enabled = pagerState.currentPage < photos.lastIndex,
-                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                        ) {
-                            Icon(Icons.Default.ChevronRight, contentDescription = "다음 사진", tint = Color.White)
-                        }
-                    }
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
-                    }
-                }
-            }
-
-            // 하단 촬영 시각 · 도시/장소 · AI 분석 바
-            Surface(
-                color = Color.Black.copy(alpha = 0.78f),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .clickable(enabled = false) {},
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "${DateUtils.formatTimeHm(currentPhoto.dateTakenMs)} · ${currentPhoto.folderName.ifBlank { currentPhoto.displayName }}",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                            val locText = listOf(currentPhoto.cityName, currentPhoto.placeLabel)
-                                .filter { it.isNotBlank() }
-                                .distinct()
-                                .joinToString(" · ")
-                            if (locText.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "위치: $locText",
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (photos.size > 1) {
+                            IconButton(
+                                onClick = {
+                                    val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
+                                    scope.launch { pagerState.animateScrollToPage(prev) }
+                                },
+                                enabled = pagerState.currentPage > 0,
+                                modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                            ) {
+                                Icon(Icons.Default.ChevronLeft, contentDescription = "이전 사진", tint = Color.White)
+                            }
+                            IconButton(
+                                onClick = {
+                                    val next = (pagerState.currentPage + 1).coerceAtMost(photos.lastIndex)
+                                    scope.launch { pagerState.animateScrollToPage(next) }
+                                },
+                                enabled = pagerState.currentPage < photos.lastIndex,
+                                modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                            ) {
+                                Icon(Icons.Default.ChevronRight, contentDescription = "다음 사진", tint = Color.White)
                             }
                         }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
+                        }
+                    }
+                }
 
-                        if (onAnalyzePhoto != null) {
-                            TextButton(
-                                onClick = { onAnalyzePhoto(currentPhoto) },
-                                enabled = !isAnalyzing,
-                            ) {
-                                if (isAnalyzing) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(15.dp),
-                                        strokeWidth = 2.dp,
-                                        color = Color.White,
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(15.dp),
+                // 중앙 사진 스와이프 영역 (남은 가용 높이만 차지해 하단 정보 카드가 절대 밀려나지 않음)
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                ) { page ->
+                    val pagePhoto = photos[page]
+                    var fullBitmap by remember(pagePhoto.uri) { mutableStateOf<ImageBitmap?>(null) }
+                    LaunchedEffect(pagePhoto.uri) {
+                        fullBitmap = withContext(Dispatchers.IO) {
+                            PhotoImageCache.load(context, pagePhoto.uri, 1600)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onDismiss,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val loaded = fullBitmap
+                        if (loaded != null) {
+                            Image(
+                                bitmap = loaded,
+                                contentDescription = pagePhoto.displayName,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+
+                // 하단 촬영 시각 · 도시/장소 · AI 내용 읽기 바 (항상 화면 내 하단에 온전히 노출)
+                Surface(
+                    color = Color(0xFF1A1A1A).copy(alpha = 0.94f),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${DateUtils.formatTimeHm(currentPhoto.dateTakenMs)} · ${currentPhoto.folderName.ifBlank { currentPhoto.displayName }}",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                val locText = listOf(currentPhoto.nearbyPoi, currentPhoto.cityName, currentPhoto.placeLabel)
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                                    .joinToString(" · ")
+                                if (locText.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "위치: $locText",
+                                        color = Color.White.copy(alpha = 0.84f),
+                                        style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = if (currentPhoto.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
-                                    color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
+                            }
+
+                            if (onAnalyzePhoto != null) {
+                                TextButton(
+                                    onClick = { onAnalyzePhoto(currentPhoto) },
+                                    enabled = !isAnalyzing,
+                                ) {
+                                    if (isAnalyzing) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(15.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color.White,
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp),
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (currentPhoto.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
+                                        color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    if (currentPhoto.aiCaption.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = currentPhoto.aiCaption,
-                            color = Color.White.copy(alpha = 0.92f),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                        if (currentPhoto.aiCaption.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = currentPhoto.aiCaption,
+                                color = Color.White.copy(alpha = 0.92f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }
