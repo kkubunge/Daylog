@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">데이로그 (Daylog)</string>
+    <string name="notification_listener_label">데이로그 SNS 일상 자동 수집</string>
+</resources>
