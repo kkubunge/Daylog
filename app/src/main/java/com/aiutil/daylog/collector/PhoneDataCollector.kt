@@ -11,29 +11,31 @@ import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
+import com.aiutil.daylog.data.LocationVisitStore
 import com.aiutil.daylog.data.SnsCaptureStore
-import com.aiutil.daylog.model.CapturedMoment
-import com.aiutil.daylog.model.DayEntry
+import com.aiutil.daylog.location.GeocodingHelper
+import com.aiutil.daylog.location.PlaceVisitEngine
+import com.aiutil.daylog.model.ActivityItem
+import com.aiutil.daylog.model.ActivityType
+import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.DaylogSettings
-import com.aiutil.daylog.model.PhotoCandidate
-import com.aiutil.daylog.model.SourceType
+import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 폰 내부의 사진(MediaStore), 통화 기록(CallLog), 문자(SMS), SNS 알림(SnsCaptureStore)을
- * 날짜별로 취합하여 짧은 일기 베이스를 구성한다.
+ * 선택한 날짜(또는 기간)의 사진(+EXIF GPS), 통화, 문자, SNS, GPS 체류 장소를
+ * 폰 데이터베이스에서 조회해 일자별 DayRecord로 통합한다.
  */
 class PhoneDataCollector(
     private val context: Context,
     private val snsCaptureStore: SnsCaptureStore,
+    private val locationVisitStore: LocationVisitStore,
+    private val geocoder: GeocodingHelper,
 ) {
-
-    data class CollectedDayBundle(
-        val photos: List<PhotoCandidate>,
-        val moments: List<CapturedMoment>,
-    )
 
     fun hasPhotoPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -43,6 +45,14 @@ class PhoneDataCollector(
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
         } else {
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    fun hasMediaLocationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_MEDIA_LOCATION) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
     }
 
@@ -56,176 +66,106 @@ class PhoneDataCollector(
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * 특정 하루치 폰 데이터를 취합해 기존 DayEntry와 병합한 새 DayEntry를 만든다.
-     * 사용자가 이미 직접 고친 글이나 사진은 덮어쓰지 않고 보존한다.
+     * 특정 일자의 모든 폰 데이터(사진·EXIF GPS·통화·문자·SNS·이동/체류 장소)를 조회해 통합한다.
      */
-    suspend fun buildOrRefreshEntry(
+    suspend fun collectDate(
         dateKey: String,
-        currentEntry: DayEntry?,
+        currentRecord: DayRecord?,
         settings: DaylogSettings,
-        forceRewriteText: Boolean = false,
-    ): DayEntry = withContext(Dispatchers.IO) {
-        val bundle = collectRange(listOf(dateKey), settings)[dateKey]
-            ?: CollectedDayBundle(emptyList(), emptyList())
-        mergeEntry(
-            dateKey = dateKey,
-            currentEntry = currentEntry,
-            bundle = bundle,
+    ): DayRecord = withContext(Dispatchers.IO) {
+        collectBatch(
+            dateKeys = listOf(dateKey),
+            existingMap = currentRecord?.let { mapOf(dateKey to it) } ?: emptyMap(),
             settings = settings,
-            forceRewriteText = forceRewriteText,
-        )
+        ).firstOrNull() ?: (currentRecord ?: DayRecord(dateKey = dateKey, updatedAtMs = System.currentTimeMillis()))
     }
 
     /**
-     * 최근 N일 등 여러 날짜를 한 번의 미디어/통화/문자 쿼리로 고속 취합한다.
+     * 여러 날짜의 데이터를 한 번의 MediaStore/CallLog/SMS 쿼리로 고속 조회한다.
      */
-    suspend fun buildOrRefreshBatch(
+    suspend fun collectBatch(
         dateKeys: List<String>,
-        existingMap: Map<String, DayEntry>,
+        existingMap: Map<String, DayRecord>,
         settings: DaylogSettings,
-        forceRewriteText: Boolean = false,
-    ): List<DayEntry> = withContext(Dispatchers.IO) {
+    ): List<DayRecord> = withContext(Dispatchers.IO) {
         if (dateKeys.isEmpty()) return@withContext emptyList()
-        val bundles = collectRange(dateKeys, settings)
-        dateKeys.mapNotNull { key ->
-            val current = existingMap[key]
-            val bundle = bundles[key] ?: CollectedDayBundle(emptyList(), emptyList())
-            val hasAnyData = bundle.photos.isNotEmpty() ||
-                bundle.moments.isNotEmpty() ||
-                (current != null && !current.isSample)
-            if (!hasAnyData) {
-                null
-            } else {
-                mergeEntry(
-                    dateKey = key,
-                    currentEntry = current,
-                    bundle = bundle,
-                    settings = settings,
-                    forceRewriteText = forceRewriteText,
-                )
-            }
-        }
-    }
-
-    private fun mergeEntry(
-        dateKey: String,
-        currentEntry: DayEntry?,
-        bundle: CollectedDayBundle,
-        settings: DaylogSettings,
-        forceRewriteText: Boolean,
-    ): DayEntry {
-        val base = if (currentEntry?.isSample == true) null else currentEntry
-        val previousMomentsById = base?.moments.orEmpty().associateBy { it.id }
-
-        // 수동 메모(MANUAL)나 공유된 항목은 유지하고, 새로 수집된 조각에 이전 숨김/별표 상태를 반영
-        val manualMoments = base?.moments.orEmpty().filter { it.sourceType == SourceType.MANUAL }
-        val collectedMoments = bundle.moments.map { m ->
-            val prev = previousMomentsById[m.id]
-            if (prev != null) {
-                m.copy(isHidden = prev.isHidden, isHighlighted = prev.isHighlighted)
-            } else {
-                m
-            }
-        }
-
-        val mergedMoments = (manualMoments + collectedMoments)
-            .distinctBy { it.id }
-            .sortedBy { it.timestampMs }
-
-        val candidatePhotos = bundle.photos.sortedByDescending { it.impactScore }
-        val heroUris = when {
-            base != null && base.isUserEdited && base.heroPhotoUris.isNotEmpty() ->
-                base.heroPhotoUris
-            else ->
-                PhotoImpactScorer.selectHeroPhotos(candidatePhotos, settings.maxHeroPhotos)
-                    .map { it.uri }
-        }
-
-        val shouldRegenerateText = base == null || !base.isUserEdited || forceRewriteText
-        val (headline, shortNote) = if (shouldRegenerateText) {
-            AutoDraftGenerator.composeAutoDraft(
-                dateKey = dateKey,
-                photos = candidatePhotos,
-                moments = mergedMoments,
-                tone = settings.defaultToneStyle,
-            )
-        } else {
-            base!!.headline to base.shortNote
-        }
-
-        val mood = if (shouldRegenerateText) {
-            AutoDraftGenerator.inferMood(candidatePhotos, mergedMoments)
-        } else {
-            base!!.mood
-        }
-
-        return DayEntry(
-            dateKey = dateKey,
-            headline = headline,
-            shortNote = shortNote,
-            isUserEdited = if (forceRewriteText) false else (base?.isUserEdited ?: false),
-            mood = mood,
-            heroPhotoUris = heroUris,
-            candidatePhotos = candidatePhotos,
-            moments = mergedMoments,
-            isBookmarked = base?.isBookmarked ?: false,
-            updatedAtMs = System.currentTimeMillis(),
-            isSample = false,
-        )
-    }
-
-    private fun collectRange(
-        dateKeys: List<String>,
-        settings: DaylogSettings,
-    ): Map<String, CollectedDayBundle> {
         val targetSet = dateKeys.toSet()
-        val minKey = dateKeys.minOrNull() ?: return emptyMap()
-        val maxKey = dateKeys.maxOrNull() ?: return emptyMap()
+        val minKey = dateKeys.minOrNull() ?: return@withContext emptyList()
+        val maxKey = dateKeys.maxOrNull() ?: return@withContext emptyList()
         val startMs = DateUtils.dayRangeMs(minKey).first
         val endMs = DateUtils.dayRangeMs(maxKey).second
 
         val contactCache = mutableMapOf<String, String>()
 
-        val photosMap = if (settings.autoCollectPhotos && hasPhotoPermission()) {
-            queryPhotos(startMs, endMs, targetSet)
+        val photosMap = if (settings.collectPhotos && hasPhotoPermission()) {
+            queryPhotos(
+                startMs = startMs,
+                endMs = endMs,
+                targetKeys = targetSet,
+                excludeScreenshots = settings.excludeScreenshots,
+                extractGps = settings.extractPhotoGps,
+            )
         } else {
             emptyMap()
         }
 
-        val callsMap = if (settings.autoCollectCalls && hasCallLogPermission()) {
+        val callsMap = if (settings.collectCalls && hasCallLogPermission()) {
             queryCallLogs(startMs, endMs, targetSet, contactCache)
         } else {
             emptyMap()
         }
 
-        val smsMap = if (settings.autoCollectSms && hasSmsPermission()) {
+        val smsMap = if (settings.collectSms && hasSmsPermission()) {
             querySmsLogs(startMs, endMs, targetSet, settings.filterSpamSms, contactCache)
         } else {
             emptyMap()
         }
 
-        val snsMap = if (settings.autoCollectSns) {
-            snsCaptureStore.momentsByDateRange(targetSet)
+        val snsMap = if (settings.collectSns) {
+            snsCaptureStore.itemsByDateRange(targetSet)
         } else {
             emptyMap()
         }
 
-        return dateKeys.associateWith { key ->
-            val combinedMoments = (callsMap[key].orEmpty() + smsMap[key].orEmpty() + snsMap[key].orEmpty())
+        val gpsMap = locationVisitStore.visitsByDateRange(targetSet)
+        val aliases = locationVisitStore.aliases.value
+
+        dateKeys.map { key ->
+            val current = existingMap[key]
+            val photos = photosMap[key] ?: current?.photos.orEmpty()
+            val manualNotes = current?.activities.orEmpty().filter { it.type == ActivityType.NOTE }
+            val mergedActivities = (
+                manualNotes +
+                    callsMap[key].orEmpty() +
+                    smsMap[key].orEmpty() +
+                    snsMap[key].orEmpty()
+                )
+                .distinctBy { it.id }
                 .sortedBy { it.timestampMs }
-            CollectedDayBundle(
-                photos = photosMap[key].orEmpty(),
-                moments = combinedMoments,
+
+            val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(key, photos, aliases)
+            val gpsVisits = gpsMap[key].orEmpty()
+            val mergedPlaces: List<PlaceVisit> = PlaceVisitEngine.mergeDayPlaces(gpsVisits, photoVisits, aliases)
+
+            DayRecord(
+                dateKey = key,
+                photos = photos.sortedBy { it.dateTakenMs },
+                places = mergedPlaces,
+                activities = mergedActivities,
+                quickNote = current?.quickNote.orEmpty(),
+                updatedAtMs = System.currentTimeMillis(),
             )
         }
     }
 
-    private fun queryPhotos(
+    private suspend fun queryPhotos(
         startMs: Long,
         endMs: Long,
         targetKeys: Set<String>,
-    ): Map<String, List<PhotoCandidate>> {
-        val result = mutableMapOf<String, MutableList<PhotoCandidate>>()
+        excludeScreenshots: Boolean,
+        extractGps: Boolean,
+    ): Map<String, List<DayPhoto>> {
+        val result = mutableMapOf<String, MutableList<DayPhoto>>()
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
@@ -237,12 +177,14 @@ class PhoneDataCollector(
             MediaStore.Images.Media.SIZE,
         )
 
-        // DATE_TAKEN이 누락된 스크린샷 등도 놓치지 않도록 DATE_MODIFIED를 여유 있게 조회한 뒤 정밀 필터링
         val startSec = (startMs / 1000L) - 86_400L
         val endSec = (endMs / 1000L) + 86_400L
         val selection = "${MediaStore.Images.Media.DATE_MODIFIED} BETWEEN ? AND ?"
         val args = arrayOf(startSec.toString(), endSec.toString())
-        val sortOrder = "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
+        val sortOrder = "${MediaStore.Images.Media.DATE_MODIFIED} ASC"
+
+        val canReadExifLocation = extractGps && hasMediaLocationPermission()
+        var exifAnalyzedCount = 0
 
         runCatching {
             context.contentResolver.query(
@@ -273,6 +215,9 @@ class PhoneDataCollector(
 
                     val displayName = if (nameIdx >= 0) cursor.getString(nameIdx).orEmpty() else "photo.jpg"
                     val folderName = if (bucketIdx >= 0) cursor.getString(bucketIdx).orEmpty() else ""
+                    val isShot = isScreenshotFile(folderName, displayName)
+                    if (excludeScreenshots && isShot) continue
+
                     val width = if (widthIdx >= 0) cursor.getInt(widthIdx) else 0
                     val height = if (heightIdx >= 0) cursor.getInt(heightIdx) else 0
                     val sizeBytes = if (sizeIdx >= 0) cursor.getLong(sizeIdx) else 0L
@@ -280,32 +225,58 @@ class PhoneDataCollector(
                     val uri = ContentUris.withAppendedId(
                         MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                         id,
-                    ).toString()
-
-                    val score = PhotoImpactScorer.scorePhoto(
-                        folderName = folderName,
-                        displayName = displayName,
-                        width = width,
-                        height = height,
-                        sizeBytes = sizeBytes,
                     )
 
-                    val candidate = PhotoCandidate(
-                        uri = uri,
-                        displayName = displayName,
-                        folderName = folderName,
-                        dateTakenMs = effectiveMs,
-                        width = width,
-                        height = height,
-                        sizeBytes = sizeBytes,
-                        impactScore = score,
-                        isCameraPhoto = PhotoImpactScorer.isCameraFolder(folderName),
+                    var lat: Double? = null
+                    var lng: Double? = null
+                    var placeLabel = ""
+
+                    if (canReadExifLocation && !isShot && exifAnalyzedCount < MAX_EXIF_READ_PER_SCAN) {
+                        val latLng = extractExifLatLong(uri)
+                        exifAnalyzedCount++
+                        if (latLng != null) {
+                            lat = latLng.first
+                            lng = latLng.second
+                            placeLabel = geocoder.reverseGeocode(lat, lng).placeName
+                        }
+                    }
+
+                    result.getOrPut(dateKey) { mutableListOf() }.add(
+                        DayPhoto(
+                            uri = uri.toString(),
+                            displayName = displayName,
+                            folderName = folderName,
+                            dateTakenMs = effectiveMs,
+                            width = width,
+                            height = height,
+                            sizeBytes = sizeBytes,
+                            isScreenshot = isShot,
+                            latitude = lat,
+                            longitude = lng,
+                            placeLabel = placeLabel,
+                        )
                     )
-                    result.getOrPut(dateKey) { mutableListOf() }.add(candidate)
                 }
             }
         }
         return result
+    }
+
+    private fun extractExifLatLong(uri: Uri): Pair<Double, Double>? {
+        return runCatching {
+            val targetUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.setRequireOriginal(uri)
+            } else {
+                uri
+            }
+            context.contentResolver.openInputStream(targetUri)?.use { stream ->
+                val exif = ExifInterface(stream)
+                val latLong = exif.latLong ?: return@use null
+                val lat = latLong[0]
+                val lng = latLong[1]
+                if (lat == 0.0 && lng == 0.0) null else lat to lng
+            }
+        }.getOrNull()
     }
 
     private fun queryCallLogs(
@@ -313,8 +284,8 @@ class PhoneDataCollector(
         endMs: Long,
         targetKeys: Set<String>,
         contactCache: MutableMap<String, String>,
-    ): Map<String, List<CapturedMoment>> {
-        val result = mutableMapOf<String, MutableList<CapturedMoment>>()
+    ): Map<String, List<ActivityItem>> {
+        val result = mutableMapOf<String, MutableList<ActivityItem>>()
         val projection = arrayOf(
             CallLog.Calls._ID,
             CallLog.Calls.NUMBER,
@@ -356,28 +327,29 @@ class PhoneDataCollector(
 
                     val personName = resolvePersonName(cachedName, number, contactCache)
                     val typeLabel = when (type) {
-                        CallLog.Calls.INCOMING_TYPE -> "수신 통화"
-                        CallLog.Calls.OUTGOING_TYPE -> "발신 통화"
-                        CallLog.Calls.MISSED_TYPE -> "부재중 전화"
-                        CallLog.Calls.REJECTED_TYPE -> "거절한 통화"
+                        CallLog.Calls.INCOMING_TYPE -> "수신"
+                        CallLog.Calls.OUTGOING_TYPE -> "발신"
+                        CallLog.Calls.MISSED_TYPE -> "부재중"
+                        CallLog.Calls.REJECTED_TYPE -> "거절"
                         else -> "통화"
                     }
-                    val summary = if (durationSec > 0L) {
+                    val detail = if (durationSec > 0L) {
                         "$typeLabel · ${DateUtils.formatDurationKorean(durationSec)}"
                     } else {
                         typeLabel
                     }
 
-                    val moment = CapturedMoment(
-                        id = "call_${callId}_$dateMs",
-                        dateKey = dateKey,
-                        timestampMs = dateMs,
-                        sourceType = SourceType.CALL,
-                        title = personName,
-                        summary = summary,
-                        durationSec = durationSec,
+                    result.getOrPut(dateKey) { mutableListOf() }.add(
+                        ActivityItem(
+                            id = "call_${callId}_$dateMs",
+                            dateKey = dateKey,
+                            timestampMs = dateMs,
+                            type = ActivityType.CALL,
+                            title = personName,
+                            detail = detail,
+                            durationSec = durationSec,
+                        )
                     )
-                    result.getOrPut(dateKey) { mutableListOf() }.add(moment)
                 }
             }
         }
@@ -390,8 +362,8 @@ class PhoneDataCollector(
         targetKeys: Set<String>,
         filterSpam: Boolean,
         contactCache: MutableMap<String, String>,
-    ): Map<String, List<CapturedMoment>> {
-        val result = mutableMapOf<String, MutableList<CapturedMoment>>()
+    ): Map<String, List<ActivityItem>> {
+        val result = mutableMapOf<String, MutableList<ActivityItem>>()
         val projection = arrayOf(
             Telephony.Sms._ID,
             Telephony.Sms.ADDRESS,
@@ -434,20 +406,21 @@ class PhoneDataCollector(
 
                     val personName = resolvePersonName("", address, contactCache)
                     val title = if (msgType == Telephony.Sms.MESSAGE_TYPE_SENT) {
-                        "$personName (보냄)"
+                        "$personName (발신)"
                     } else {
                         personName
                     }
 
-                    val moment = CapturedMoment(
-                        id = "sms_${smsId}_$dateMs",
-                        dateKey = dateKey,
-                        timestampMs = dateMs,
-                        sourceType = SourceType.SMS,
-                        title = title,
-                        summary = SmsSpamFilter.cleanSmsSummary(body, 52),
+                    result.getOrPut(dateKey) { mutableListOf() }.add(
+                        ActivityItem(
+                            id = "sms_${smsId}_$dateMs",
+                            dateKey = dateKey,
+                            timestampMs = dateMs,
+                            type = ActivityType.SMS,
+                            title = title,
+                            detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                        )
                     )
-                    result.getOrPut(dateKey) { mutableListOf() }.add(moment)
                 }
             }
         }
@@ -462,7 +435,6 @@ class PhoneDataCollector(
         if (cachedName.isNotBlank()) return cachedName.trim()
         val cleanNumber = rawNumber.trim()
         if (cleanNumber.isBlank()) return "알 수 없음"
-
         cache[cleanNumber]?.let { return it }
 
         val lookedUp = if (hasContactsPermission()) {
@@ -488,5 +460,16 @@ class PhoneDataCollector(
         val resolved = lookedUp?.takeIf { it.isNotBlank() } ?: cleanNumber
         cache[cleanNumber] = resolved
         return resolved
+    }
+
+    companion object {
+        private const val MAX_EXIF_READ_PER_SCAN = 120
+
+        internal fun isScreenshotFile(folderName: String, displayName: String): Boolean {
+            val f = folderName.lowercase()
+            val n = displayName.lowercase()
+            return listOf("screenshot", "screenshots", "screen_", "capture", "스크린샷", "캡처")
+                .any { f.contains(it) || n.contains(it) }
+        }
     }
 }

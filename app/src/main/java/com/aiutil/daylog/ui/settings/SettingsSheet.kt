@@ -14,10 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -31,7 +29,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -45,11 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DaylogSettings
-import com.aiutil.daylog.model.DraftToneStyle
 import com.aiutil.daylog.model.PermissionStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,20 +51,19 @@ import com.aiutil.daylog.model.PermissionStatus
 fun SettingsSheet(
     settings: DaylogSettings,
     permissionStatus: PermissionStatus,
-    hasSampleEntries: Boolean,
-    isBatchCollecting: Boolean,
+    isTrackingRunning: Boolean,
+    isBatchScanning: Boolean,
     onDismiss: () -> Unit,
     onRequestRuntimePermissions: () -> Unit,
+    onRequestBackgroundLocation: () -> Unit,
     onOpenNotificationListenerSettings: () -> Unit,
-    onBatchCollectDays: (days: Int) -> Unit,
+    onToggleTrackingService: () -> Unit,
+    onBatchScanDays: (days: Int) -> Unit,
     onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
     onExportJsonBackup: () -> Unit,
-    onClearSampleEntries: () -> Unit,
-    onClearAllEntries: () -> Unit,
+    onClearAllRecords: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var apiKeyDraft by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
-    var showApiKey by remember { mutableStateOf(false) }
     var showClearAllConfirm by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
@@ -81,7 +74,7 @@ fun SettingsSheet(
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "settings_header") {
                 Row(
@@ -89,7 +82,7 @@ fun SettingsSheet(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "데이로그 설정 및 데이터 연결",
+                        text = "데이로그 설정 및 권한",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
@@ -100,11 +93,11 @@ fun SettingsSheet(
                 }
             }
 
-            // 1. 폰 데이터 권한 연결 상태
-            item(key = "permissions_section") {
+            // 1. 권한 연결 상태
+            item(key = "perms_card") {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -112,15 +105,14 @@ fun SettingsSheet(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            text = "폰 데이터 접근 권한",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        PermissionStatusRow("📷 사진 (갤러리 자동 선별)", permissionStatus.photosGranted)
-                        PermissionStatusRow("📞 통화 기록 & 연락처 이름", permissionStatus.callLogGranted && permissionStatus.contactsGranted)
-                        PermissionStatusRow("💬 문자 메시지 (일상 대화)", permissionStatus.smsGranted)
-                        PermissionStatusRow("📱 SNS 알림 실시간 수집", permissionStatus.snsNotificationEnabled)
+                        Text("데이터 접근 권한", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        PermissionStatusRow("사진 조회", permissionStatus.photosGranted)
+                        PermissionStatusRow("사진 내 GPS 위치 읽기", permissionStatus.mediaLocationGranted)
+                        PermissionStatusRow("통화 기록 & 연락처", permissionStatus.callLogGranted && permissionStatus.contactsGranted)
+                        PermissionStatusRow("문자 메시지", permissionStatus.smsGranted)
+                        PermissionStatusRow("위치 (GPS 이동·체류)", permissionStatus.locationGranted)
+                        PermissionStatusRow("백그라운드 위치 (항상 허용)", permissionStatus.backgroundLocationGranted)
+                        PermissionStatusRow("SNS 알림 수신", permissionStatus.snsNotificationEnabled)
 
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
@@ -131,31 +123,32 @@ fun SettingsSheet(
                                 onClick = onRequestRuntimePermissions,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("사진·통화·문자 허용", style = MaterialTheme.typography.labelMedium)
+                                Text("기본 권한 허용", style = MaterialTheme.typography.labelMedium)
                             }
                             OutlinedButton(
-                                onClick = onOpenNotificationListenerSettings,
+                                onClick = onRequestBackgroundLocation,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("SNS 알림 접근", style = MaterialTheme.typography.labelMedium)
+                                Text("백그라운드 위치", style = MaterialTheme.typography.labelMedium)
                             }
                         }
-                        Text(
-                            text = "※ 모든 데이터는 내 폰 안에만 저장되며 외부 서버로 전송되지 않습니다.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        OutlinedButton(
+                            onClick = onOpenNotificationListenerSettings,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("SNS 알림 접근 설정 열기")
+                        }
                     }
                 }
             }
 
-            // 2. 지난 일상 일괄 자동 취합
-            item(key = "batch_collect_section") {
+            // 2. GPS 위치 기록 설정
+            item(key = "gps_card") {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -163,168 +156,122 @@ fun SettingsSheet(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "과거 기록 한 번에 자동 채우기",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("이동 · 체류 장소 자동 기록", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = if (isTrackingRunning) "현재 백그라운드에서 기록 중" else "중지됨",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Button(onClick = onToggleTrackingService) {
+                                Text(if (isTrackingRunning) "중지" else "시작")
+                            }
                         }
-                        Text(
-                            text = "폰에 남아있는 최근 사진·통화·문자 기록을 스캔해 지난 날짜들의 짧은 일기 베이스를 한꺼번에 만들어줍니다. (이미 직접 고친 날은 그대로 유지)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                        HorizontalDivider()
+
+                        Text("GPS 확인 주기", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(1, 3, 5, 10).forEach { mins ->
+                                FilterChip(
+                                    selected = settings.locationIntervalMin == mins,
+                                    onClick = { onUpdateSettings { it.copy(locationIntervalMin = mins) } },
+                                    label = { Text("${mins}분") },
+                                )
+                            }
+                        }
+
+                        SettingSwitchRow(
+                            title = "사진 EXIF GPS로 과거 방문 장소 복원",
+                            checked = settings.extractPhotoGps,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(extractPhotoGps = v) } },
                         )
+                    }
+                }
+            }
+
+            // 3. 수집 항목 설정 & 과거 일괄 스캔
+            item(key = "collect_card") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("데이터 조회 항목", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        SettingSwitchRow(
+                            title = "사진 조회",
+                            checked = settings.collectPhotos,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(collectPhotos = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "사진 목록에서 스크린샷 제외",
+                            checked = settings.excludeScreenshots,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(excludeScreenshots = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "통화 내역 조회",
+                            checked = settings.collectCalls,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(collectCalls = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "문자 내역 조회",
+                            checked = settings.collectSms,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(collectSms = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "광고·인증번호·결제 스팸 문자 제외",
+                            checked = settings.filterSpamSms,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(filterSpamSms = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "SNS 알림 수집",
+                            checked = settings.collectSns,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(collectSns = v) } },
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        Text("과거 날짜 한꺼번에 불러오기", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Button(
-                                onClick = { onBatchCollectDays(7) },
-                                enabled = !isBatchCollecting,
+                                onClick = { onBatchScanDays(7) },
+                                enabled = !isBatchScanning,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                if (isBatchCollecting) {
+                                if (isBatchScanning) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                                 } else {
-                                    Text("최근 7일 취합")
+                                    Text("최근 7일 스캔")
                                 }
                             }
                             OutlinedButton(
-                                onClick = { onBatchCollectDays(30) },
-                                enabled = !isBatchCollecting,
+                                onClick = { onBatchScanDays(30) },
+                                enabled = !isBatchScanning,
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text("최근 30일 취합")
+                                Text("최근 30일 스캔")
                             }
                         }
                     }
                 }
             }
 
-            // 3. 자동 취합 세부 옵션
-            item(key = "collection_options") {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = "수집 항목 및 요약 스타일",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        SettingSwitchRow(
-                            title = "사진 자동 선별",
-                            checked = settings.autoCollectPhotos,
-                            onCheckedChange = { v -> onUpdateSettings { it.copy(autoCollectPhotos = v) } },
-                        )
-                        SettingSwitchRow(
-                            title = "통화 내역 자동 취합",
-                            checked = settings.autoCollectCalls,
-                            onCheckedChange = { v -> onUpdateSettings { it.copy(autoCollectCalls = v) } },
-                        )
-                        SettingSwitchRow(
-                            title = "문자 메시지 자동 취합",
-                            checked = settings.autoCollectSms,
-                            onCheckedChange = { v -> onUpdateSettings { it.copy(autoCollectSms = v) } },
-                        )
-                        SettingSwitchRow(
-                            title = "광고·인증번호·결제 스팸 필터",
-                            checked = settings.filterSpamSms,
-                            onCheckedChange = { v -> onUpdateSettings { it.copy(filterSpamSms = v) } },
-                        )
-                        SettingSwitchRow(
-                            title = "SNS 알림 자동 수집 (카톡·인스타 등)",
-                            checked = settings.autoCollectSns,
-                            onCheckedChange = { v -> onUpdateSettings { it.copy(autoCollectSns = v) } },
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
-
-                        Text("대표 이미지 자동 선별 장수", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(1, 2).forEach { count ->
-                                FilterChip(
-                                    selected = settings.maxHeroPhotos == count,
-                                    onClick = { onUpdateSettings { it.copy(maxHeroPhotos = count) } },
-                                    label = { Text("임팩트 ${count}장") },
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("자동 초안 기본 문체", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            DraftToneStyle.entries.forEach { tone ->
-                                FilterChip(
-                                    selected = settings.defaultToneStyle == tone,
-                                    onClick = { onUpdateSettings { it.copy(defaultToneStyle = tone) } },
-                                    label = { Text(tone.label, style = MaterialTheme.typography.labelSmall) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. 선택적 Gemini AI 한 줄 다듬기
-            item(key = "gemini_section") {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "Gemini AI 한 줄 다듬기 (선택)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "키를 비워두어도 온디바이스 자동 요약으로 동작하며, 키를 넣으면 상세 화면에서 AI 문장 다듬기 버튼을 쓸 수 있어요.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedTextField(
-                            value = apiKeyDraft,
-                            onValueChange = { apiKeyDraft = it },
-                            label = { Text("Gemini API 키") },
-                            singleLine = true,
-                            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                TextButton(onClick = { showApiKey = !showApiKey }) {
-                                    Text(if (showApiKey) "숨김" else "보기", style = MaterialTheme.typography.labelSmall)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Button(
-                                onClick = {
-                                    onUpdateSettings { it.copy(geminiApiKey = apiKeyDraft.trim()) }
-                                },
-                            ) {
-                                Text("API 키 저장")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 5. 백업 및 초기화
-            item(key = "data_manage_section") {
+            // 4. 백업 및 초기화
+            item(key = "backup_card") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = onExportJsonBackup,
@@ -332,28 +279,18 @@ fun SettingsSheet(
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("전체 일기 JSON 백업 공유하기")
-                    }
-                    if (hasSampleEntries) {
-                        OutlinedButton(
-                            onClick = onClearSampleEntries,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("안내용 예시 일기만 지우기")
-                        }
+                        Text("전체 기록 JSON 내보내기")
                     }
                     TextButton(
                         onClick = { showClearAllConfirm = true },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("전체 기록 초기화", color = MaterialTheme.colorScheme.error)
+                        Text("저장된 데이로그 기록 초기화", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
 
-            item(key = "settings_bottom_spacer") {
+            item(key = "settings_bottom") {
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
@@ -362,20 +299,18 @@ fun SettingsSheet(
     if (showClearAllConfirm) {
         AlertDialog(
             onDismissRequest = { showClearAllConfirm = false },
-            title = { Text("모든 일기 기록을 지울까요?") },
-            text = { Text("저장된 일기와 수집된 SNS 알림 기록이 모두 삭제됩니다. 폰의 원본 사진·통화·문자는 삭제되지 않습니다.") },
+            title = { Text("저장된 모든 기록을 초기화할까요?") },
+            text = { Text("앱에 저장된 GPS 이동 기록, SNS 알림 기록, 메모가 모두 삭제됩니다. 폰 원본 데이터는 유지됩니다.") },
             confirmButton = {
                 TextButton(onClick = {
                     showClearAllConfirm = false
-                    onClearAllEntries()
+                    onClearAllRecords()
                 }) {
-                    Text("전체 삭제", color = MaterialTheme.colorScheme.error)
+                    Text("초기화", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showClearAllConfirm = false }) {
-                    Text("취소")
-                }
+                TextButton(onClick = { showClearAllConfirm = false }) { Text("취소") }
             },
         )
     }
@@ -390,34 +325,26 @@ private fun PermissionStatusRow(label: String, granted: Boolean) {
     ) {
         Text(text = label, style = MaterialTheme.typography.bodySmall)
         Surface(
-            color = if (granted) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
+            color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
             shape = RoundedCornerShape(999.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             ) {
                 if (granted) {
                     Icon(
-                        imageVector = Icons.Default.CheckCircle,
+                        imageVector = Icons.Default.Check,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(13.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(12.dp),
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
                 }
                 Text(
-                    text = if (granted) "연결됨" else "권한 필요",
+                    text = if (granted) "허용됨" else "미허용",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (granted) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = if (granted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

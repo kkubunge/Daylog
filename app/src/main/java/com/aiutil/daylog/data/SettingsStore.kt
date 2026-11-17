@@ -9,11 +9,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
- * 데이로그 자동 수집 옵션, 대표 이미지 수, 문체, API 키 등 앱 설정을 저장한다.
+ * 데이로그 수집 항목 및 GPS 위치 추적 설정을 저장한다.
  */
 class SettingsStore(context: Context) {
 
-    private val prefs = context.getSharedPreferences("daylog_settings", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("daylog_v2_settings", Context.MODE_PRIVATE)
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -35,6 +35,6 @@ class SettingsStore(context: Context) {
     }
 
     private companion object {
-        const val KEY_SETTINGS_JSON = "daylog_settings_json"
+        const val KEY_SETTINGS_JSON = "daylog_v2_settings_json"
     }
 }

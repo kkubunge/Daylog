@@ -7,58 +7,63 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// 따뜻한 종이 다이어리 & 폴라로이드 감성 컬러 팔레트
-val TerracottaPrimary = Color(0xFFC86D51)
-val TerracottaContainer = Color(0xFFF7E2D9)
-val SageSecondary = Color(0xFF5E8267)
-val SageContainer = Color(0xFFE0EDE3)
-val HoneyTertiary = Color(0xFFC98A3A)
-val WarmPaperBg = Color(0xFFFAF6F0)
-val WarmCardSurface = Color(0xFFFFFDF9)
-val WarmSubSurface = Color(0xFFF2EAE0)
-val InkText = Color(0xFF2B2523)
-val MutedCocoaText = Color(0xFF786D67)
-val WarmOutline = Color(0xFFE3D8CE)
+// 색채를 배제한 깔끔한 무채색(모노크롬) 디자인 팔레트
+val MonoCharcoal = Color(0xFF15171A)
+val MonoLightBg = Color(0xFFF6F7F9)
+val MonoLightSurface = Color(0xFFFFFFFF)
+val MonoLightSubSurface = Color(0xFFEDF0F4)
+val MonoLightText = Color(0xFF111315)
+val MonoLightMutedText = Color(0xFF68707A)
+val MonoLightOutline = Color(0xFFE2E5EA)
+val MonoLightOutlineSubtle = Color(0xFFECEDF1)
+
+val MonoDarkBg = Color(0xFF0F1012)
+val MonoDarkSurface = Color(0xFF17191D)
+val MonoDarkSubSurface = Color(0xFF22252B)
+val MonoDarkText = Color(0xFFF3F4F6)
+val MonoDarkMutedText = Color(0xFF9AA1AC)
+val MonoDarkOutline = Color(0xFF2D3139)
 
 private val LightColors = lightColorScheme(
-    primary = TerracottaPrimary,
+    primary = MonoCharcoal,
     onPrimary = Color.White,
-    primaryContainer = TerracottaContainer,
-    onPrimaryContainer = Color(0xFF4A1D10),
-    secondary = SageSecondary,
+    primaryContainer = Color(0xFFE9ECEF),
+    onPrimaryContainer = MonoCharcoal,
+    secondary = Color(0xFF495057),
     onSecondary = Color.White,
-    secondaryContainer = SageContainer,
-    onSecondaryContainer = Color(0xFF193520),
-    tertiary = HoneyTertiary,
+    secondaryContainer = Color(0xFFF1F3F5),
+    onSecondaryContainer = Color(0xFF212529),
+    tertiary = Color(0xFF343A40),
     onTertiary = Color.White,
-    background = WarmPaperBg,
-    onBackground = InkText,
-    surface = WarmCardSurface,
-    onSurface = InkText,
-    surfaceVariant = WarmSubSurface,
-    onSurfaceVariant = MutedCocoaText,
-    outline = WarmOutline,
-    outlineVariant = Color(0xFFEDE4DB),
+    background = MonoLightBg,
+    onBackground = MonoLightText,
+    surface = MonoLightSurface,
+    onSurface = MonoLightText,
+    surfaceVariant = MonoLightSubSurface,
+    onSurfaceVariant = MonoLightMutedText,
+    outline = MonoLightOutline,
+    outlineVariant = MonoLightOutlineSubtle,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFE6967C),
-    onPrimary = Color(0xFF461B0D),
-    primaryContainer = Color(0xFF662E1B),
-    onPrimaryContainer = Color(0xFFFFDBD0),
-    secondary = Color(0xFF8FBC99),
-    onSecondary = Color(0xFF16351E),
-    secondaryContainer = Color(0xFF2B4C33),
-    onSecondaryContainer = Color(0xFFD5F0DA),
-    tertiary = Color(0xFFE6B46C),
-    background = Color(0xFF191513),
-    onBackground = Color(0xFFF3ECE6),
-    surface = Color(0xFF241E1B),
-    onSurface = Color(0xFFF3ECE6),
-    surfaceVariant = Color(0xFF332B27),
-    onSurfaceVariant = Color(0xFFC7BBB4),
-    outline = Color(0xFF4D423C),
-    outlineVariant = Color(0xFF3A312C),
+    primary = Color(0xFFF1F3F5),
+    onPrimary = Color(0xFF111315),
+    primaryContainer = Color(0xFF2A2E35),
+    onPrimaryContainer = Color(0xFFF3F4F6),
+    secondary = Color(0xFFADB5BD),
+    onSecondary = Color(0xFF15171A),
+    secondaryContainer = Color(0xFF24282F),
+    onSecondaryContainer = Color(0xFFE5E7EB),
+    tertiary = Color(0xFFCED4DA),
+    onTertiary = Color(0xFF111315),
+    background = MonoDarkBg,
+    onBackground = MonoDarkText,
+    surface = MonoDarkSurface,
+    onSurface = MonoDarkText,
+    surfaceVariant = MonoDarkSubSurface,
+    onSurfaceVariant = MonoDarkMutedText,
+    outline = MonoDarkOutline,
+    outlineVariant = Color(0xFF23272E),
 )
 
 @Composable
@@ -66,7 +71,6 @@ fun DaylogTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    // 다이어리의 따뜻한 색감을 일관되게 유지하기 위해 전용 팔레트 적용
     val colors = if (darkTheme) DarkColors else LightColors
     MaterialTheme(
         colorScheme = colors,

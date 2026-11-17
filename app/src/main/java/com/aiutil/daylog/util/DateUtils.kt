@@ -4,18 +4,15 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
 
 /**
- * minSdk 24 환경에서도 안전하게 동작하는 날짜/시간 계산 유틸리티.
+ * minSdk 24 환경에서 안전하게 동작하는 날짜/시간/거리 포맷 유틸리티.
  */
 object DateUtils {
 
     private const val DATE_FORMAT = "yyyy-MM-dd"
 
-    fun todayKey(nowMs: Long = System.currentTimeMillis()): String {
-        return dateKeyFromMs(nowMs)
-    }
+    fun todayKey(nowMs: Long = System.currentTimeMillis()): String = dateKeyFromMs(nowMs)
 
     fun dateKeyFromMs(ms: Long): String {
         val sdf = SimpleDateFormat(DATE_FORMAT, Locale.US)
@@ -51,21 +48,10 @@ object DateUtils {
         return start.timeInMillis to end.timeInMillis
     }
 
-    fun shiftDaysKey(dateKey: String, deltaDays: Int): String {
-        val cal = parseCalendar(dateKey)
-        cal.add(Calendar.DAY_OF_YEAR, deltaDays)
-        return dateKeyFromMs(cal.timeInMillis)
-    }
-
     fun daysAgoKey(baseKey: String, daysAgo: Int): String {
-        return shiftDaysKey(baseKey, -daysAgo)
-    }
-
-    fun daysBetween(olderKey: String, newerKey: String): Int {
-        val olderMs = parseCalendar(olderKey).timeInMillis
-        val newerMs = parseCalendar(newerKey).timeInMillis
-        val diff = newerMs - olderMs
-        return (diff / (24.0 * 60.0 * 60.0 * 1000.0)).roundToInt()
+        val cal = parseCalendar(baseKey)
+        cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
+        return dateKeyFromMs(cal.timeInMillis)
     }
 
     fun formatKoreanDate(dateKey: String): String {
@@ -96,14 +82,31 @@ object DateUtils {
         }
     }
 
+    fun formatStayMinutes(minutes: Long): String {
+        if (minutes <= 0L) return "방문"
+        val hours = minutes / 60L
+        val remain = minutes % 60L
+        return when {
+            hours > 0L && remain > 0L -> "${hours}시간 ${remain}분 체류"
+            hours > 0L -> "${hours}시간 체류"
+            else -> "${remain}분 체류"
+        }
+    }
+
+    fun formatDistanceKorean(meters: Int): String {
+        if (meters <= 0) return ""
+        return if (meters >= 1000) {
+            String.format(Locale.US, "%.1f km", meters / 1000.0)
+        } else {
+            "${meters} m"
+        }
+    }
+
     fun yearMonthOf(dateKey: String): Pair<Int, Int> {
         val cal = parseCalendar(dateKey)
         return cal.get(Calendar.YEAR) to (cal.get(Calendar.MONTH) + 1)
     }
 
-    /**
-     * 달력 그리드 렌더링용으로 해당 월의 시작 요일 오프셋(일요일=0)과 일별 dateKey 목록을 반환한다.
-     */
     fun monthGridDays(year: Int, month1To12: Int): Pair<Int, List<String>> {
         val cal = Calendar.getInstance().apply {
             set(year, month1To12 - 1, 1, 0, 0, 0)

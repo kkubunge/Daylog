@@ -1,45 +1,32 @@
 package com.aiutil.daylog.ui.editor
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,58 +46,56 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aiutil.daylog.model.CapturedMoment
-import com.aiutil.daylog.model.DayEntry
-import com.aiutil.daylog.model.DraftToneStyle
-import com.aiutil.daylog.model.MoodTag
-import com.aiutil.daylog.model.SnsPlatform
-import com.aiutil.daylog.model.SourceType
+import com.aiutil.daylog.model.ActivityType
+import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.DayRecord
+import com.aiutil.daylog.model.PlaceVisit
+import com.aiutil.daylog.ui.calendar.QuickNoteAddDialog
+import com.aiutil.daylog.ui.calendar.SavePlaceAliasDialog
+import com.aiutil.daylog.ui.components.ActivityLogRow
 import com.aiutil.daylog.ui.components.DaylogPhotoImage
-import com.aiutil.daylog.ui.components.HeroPhotoPair
-import com.aiutil.daylog.ui.components.MomentRowItem
-import com.aiutil.daylog.ui.components.MoodSelectorRow
+import com.aiutil.daylog.ui.components.PlaceVisitTimelineItem
+import com.aiutil.daylog.ui.components.SummaryMetricStrip
+import com.aiutil.daylog.ui.components.openLocationInMap
 import com.aiutil.daylog.util.DateUtils
 
+/**
+ * 선택한 날짜의 전체 데이터(장소·사진 격자·시간순 활동·간단 메모)를 크게 조회하는 상세 시트.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DayDetailSheet(
     dateKey: String,
-    entry: DayEntry?,
-    maxHeroPhotos: Int,
-    hasGeminiKey: Boolean,
-    isBusy: Boolean,
+    record: DayRecord?,
+    isScanning: Boolean,
     onDismiss: () -> Unit,
-    onSaveText: (headline: String, shortNote: String, mood: MoodTag) -> Unit,
-    onSetHeroPhotos: (List<String>) -> Unit,
-    onPickGalleryPhotos: () -> Unit,
-    onRecollectPhoneData: () -> Unit,
-    onApplyLocalTone: (DraftToneStyle) -> Unit,
-    onPolishWithGemini: () -> Unit,
-    onToggleBookmark: () -> Unit,
-    onAddManualMoment: (sourceType: SourceType, snsPlatform: SnsPlatform, title: String, summary: String) -> Unit,
-    onToggleMomentHidden: (momentId: String) -> Unit,
-    onDeleteMoment: (momentId: String) -> Unit,
-    onDeleteEntry: () -> Unit,
-    onPhotoClick: (String) -> Unit,
+    onRefreshDate: () -> Unit,
+    onSaveQuickNote: (String) -> Unit,
+    onAddActivityNote: (title: String, detail: String) -> Unit,
+    onDeleteActivity: (activityId: String) -> Unit,
+    onSavePlaceAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onDeleteRecord: () -> Unit,
+    onPhotoClick: (DayPhoto) -> Unit,
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val current = entry ?: DayEntry(dateKey = dateKey)
+    val current = record ?: DayRecord(dateKey = dateKey)
 
-    var headline by remember(current.dateKey, current.headline) {
-        mutableStateOf(current.headline)
+    var quickNote by remember(current.dateKey, current.quickNote) {
+        mutableStateOf(current.quickNote)
     }
-    var shortNote by remember(current.dateKey, current.shortNote) {
-        mutableStateOf(current.shortNote)
-    }
-    var mood by remember(current.dateKey, current.mood) {
-        mutableStateOf(current.mood)
-    }
-
-    var showAddMomentDialog by remember { mutableStateOf(false) }
+    var showAddNoteDialog by remember { mutableStateOf(false) }
+    var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    val callCount = current.activities.count { it.type == ActivityType.CALL }
+    val smsCount = current.activities.count { it.type == ActivityType.SMS }
+    val snsCount = current.activities.count { it.type == ActivityType.SNS }
+    val photoRows = remember(current.photos) { current.photos.chunked(3) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -122,8 +107,7 @@ fun DayDetailSheet(
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 상단 날짜 & 북마크/삭제/닫기 바
-            item(key = "header") {
+            item(key = "detail_header") {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -134,26 +118,27 @@ fun DayDetailSheet(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
+                        val sub = if (current.totalMoveMeters > 0) {
+                            "총 이동거리 약 ${DateUtils.formatDistanceKorean(current.totalMoveMeters)}"
+                        } else {
+                            "일자별 전체 활동 및 위치 내역"
+                        }
                         Text(
-                            text = if (current.isUserEdited) "직접 다듬은 기록" else "폰 데이터 자동 취합 베이스",
+                            text = sub,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = onToggleBookmark) {
-                        Icon(
-                            imageVector = if (current.isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                            contentDescription = "책갈피",
-                            tint = if (current.isBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    IconButton(onClick = onRefreshDate, enabled = !isScanning) {
+                        if (isScanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+                        }
                     }
-                    if (entry != null) {
+                    if (record != null) {
                         IconButton(onClick = { showDeleteConfirm = true }) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = "이 날 기록 삭제",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "기록 삭제")
                         }
                     }
                     IconButton(onClick = onDismiss) {
@@ -162,230 +147,119 @@ fun DayDetailSheet(
                 }
             }
 
-            // 1. 임팩트 있는 대표 사진 1~2장 영역
-            item(key = "hero_section") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = "오늘의 임팩트 사진 (${current.heroPhotoUris.size}/${maxHeroPhotos}장)",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        TextButton(onClick = onPickGalleryPhotos) {
-                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("갤러리에서 추가", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-
-                    if (current.heroPhotoUris.isNotEmpty()) {
-                        HeroPhotoPair(
-                            uris = current.heroPhotoUris,
-                            onPhotoClick = onPhotoClick,
-                            singleHeight = 190.dp,
-                            pairHeight = 155.dp,
-                        )
-                        // 선택된 대표 사진 개별 해제 칩
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            current.heroPhotoUris.forEachIndexed { idx, uri ->
-                                AssistChip(
-                                    onClick = {
-                                        onSetHeroPhotos(current.heroPhotoUris.filterNot { it == uri })
-                                    },
-                                    label = { Text("대표 사진 ${idx + 1} 빼기", style = MaterialTheme.typography.labelSmall) },
-                                    trailingIcon = {
-                                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    },
-                                )
-                            }
-                        }
-                    }
-
-                    // 폰에서 자동 스캔된 그날의 사진 후보 가로 스트립
-                    if (current.candidatePhotos.isNotEmpty()) {
-                        Text(
-                            text = "이날 찍은 사진 ${current.candidatePhotos.size}장 중 고르기 (임팩트 순)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            itemsIndexed(current.candidatePhotos, key = { _, p -> p.uri }) { idx, photo ->
-                                val isSelected = photo.uri in current.heroPhotoUris
-                                Box(
-                                    modifier = Modifier
-                                        .size(84.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .border(
-                                            width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                            shape = RoundedCornerShape(12.dp),
-                                        )
-                                        .clickable {
-                                            val updated = if (isSelected) {
-                                                current.heroPhotoUris.filterNot { it == photo.uri }
-                                            } else {
-                                                (current.heroPhotoUris + photo.uri).takeLast(maxHeroPhotos)
-                                            }
-                                            onSetHeroPhotos(updated)
-                                        },
-                                ) {
-                                    DaylogPhotoImage(
-                                        uri = photo.uri,
-                                        maxDim = 320,
-                                        modifier = Modifier.matchParentSize(),
-                                    )
-                                    if (idx < 2 && photo.impactScore >= 55.0) {
-                                        Surface(
-                                            color = Color.Black.copy(alpha = 0.6f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier
-                                                .align(Alignment.TopStart)
-                                                .padding(4.dp),
-                                        ) {
-                                            Text(
-                                                text = "BEST",
-                                                color = Color.White,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                                            )
-                                        }
-                                    }
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = "선택됨",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(4.dp)
-                                                .size(20.dp)
-                                                .background(Color.White, CircleShape),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            item(key = "detail_metrics") {
+                SummaryMetricStrip(
+                    placeCount = current.places.size,
+                    photoCount = current.photos.size,
+                    callCount = callCount,
+                    smsCount = smsCount,
+                    snsCount = snsCount,
+                )
             }
 
-            // 2. 기분 & 짧은 일기 편집
-            item(key = "editor_section") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HorizontalDivider()
+            // 1. 이동 및 체류 장소 전체
+            if (current.places.isNotEmpty()) {
+                item(key = "detail_places_header") {
                     Text(
-                        text = "짧게 끄적이기",
+                        text = "이동 및 체류 장소 (${current.places.size})",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                     )
-                    MoodSelectorRow(
-                        selectedMood = mood,
-                        onSelect = { mood = it },
+                }
+                items(current.places.size, key = { idx -> "dp_${current.places[idx].id}" }) { idx ->
+                    val visit = current.places[idx]
+                    PlaceVisitTimelineItem(
+                        visit = visit,
+                        isLast = idx == current.places.lastIndex,
+                        onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
+                        onSaveAlias = { v -> aliasTargetVisit = v },
                     )
-                    OutlinedTextField(
-                        value = headline,
-                        onValueChange = { headline = it },
-                        label = { Text("한 줄 제목") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = shortNote,
-                        onValueChange = { shortNote = it },
-                        label = { Text("오늘의 짧은 기록 (1~3줄)") },
-                        minLines = 3,
-                        maxLines = 6,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                }
+            }
 
-                    // 문체 변환 & AI 다듬기 & 폰 재취합 액션
+            // 2. 촬영 사진 3열 격자
+            if (current.photos.isNotEmpty()) {
+                item(key = "detail_photos_header") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    Text(
+                        text = "사진 (${current.photos.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                items(photoRows.size, key = { r -> "pr_$r" }) { rowIdx ->
+                    val rowPhotos = photoRows[rowIdx]
                     Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        AssistChip(
-                            onClick = onRecollectPhoneData,
-                            enabled = !isBusy,
-                            leadingIcon = {
-                                if (isBusy) {
-                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(15.dp))
-                                }
-                            },
-                            label = { Text("폰 데이터 다시 취합", style = MaterialTheme.typography.labelSmall) },
-                        )
-                        DraftToneStyle.entries.forEach { tone ->
-                            AssistChip(
-                                onClick = { onApplyLocalTone(tone) },
-                                enabled = !isBusy,
-                                label = { Text("${tone.label}체로", style = MaterialTheme.typography.labelSmall) },
-                            )
+                        rowPhotos.forEach { photo ->
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onPhotoClick(photo) },
+                            ) {
+                                DaylogPhotoImage(
+                                    uri = photo.uri,
+                                    maxDim = 380,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                                )
+                                Text(
+                                    text = DateUtils.formatTimeHm(photo.dateTakenMs) +
+                                        if (photo.placeLabel.isNotBlank()) " · ${photo.placeLabel}" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
                         }
-                        if (hasGeminiKey) {
-                            AssistChip(
-                                onClick = onPolishWithGemini,
-                                enabled = !isBusy,
-                                leadingIcon = {
-                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(15.dp))
-                                },
-                                label = { Text("AI 문장 다듬기", style = MaterialTheme.typography.labelSmall) },
-                            )
+                        repeat(3 - rowPhotos.size) {
+                            Spacer(modifier = Modifier.weight(1f))
                         }
-                    }
-
-                    Button(
-                        onClick = { onSaveText(headline, shortNote, mood) },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("이 날의 일기 저장하기")
                     }
                 }
             }
 
-            // 3. 수집된 통화 · 문자 · SNS · 메모 조각 타임라인
-            item(key = "moments_header") {
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(6.dp))
+            // 3. 시간순 활동 내역 (통화·문자·SNS·메모)
+            item(key = "detail_activities_header") {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "자동 수집 · 기록 조각 (${current.moments.size}건)",
+                        text = "시간순 활동 내역 (${current.activities.size})",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                     )
                     OutlinedButton(
-                        onClick = { showAddMomentDialog = true },
+                        onClick = { showAddNoteDialog = true },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("SNS·메모 추가", style = MaterialTheme.typography.labelSmall)
+                        Text("메모 추가", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
 
-            if (current.moments.isEmpty()) {
-                item(key = "moments_empty") {
+            if (current.activities.isEmpty()) {
+                item(key = "detail_activities_empty") {
                     Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = "이 날 수집된 통화·문자·SNS 조각이 아직 없어요. 상단의 '폰 데이터 다시 취합'을 누르거나 SNS·메모를 직접 남길 수 있어요.",
+                            text = "기록된 통화·문자·SNS 활동이 없습니다.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(14.dp),
@@ -393,35 +267,68 @@ fun DayDetailSheet(
                     }
                 }
             } else {
-                items(current.moments, key = { it.id }) { moment ->
-                    MomentRowItem(
-                        moment = moment,
-                        onAppendToNote = { m ->
-                            val addition = "${m.title}: ${m.summary}"
-                            shortNote = if (shortNote.isBlank()) {
-                                addition
-                            } else {
-                                "$shortNote\n$addition"
-                            }
+                items(current.activities, key = { "da_${it.id}" }) { item ->
+                    ActivityLogRow(
+                        item = item,
+                        onDelete = if (item.type == ActivityType.NOTE) {
+                            { onDeleteActivity(item.id) }
+                        } else {
+                            null
                         },
-                        onToggleHide = { m -> onToggleMomentHidden(m.id) },
-                        onDelete = { m -> onDeleteMoment(m.id) },
                     )
                 }
             }
 
-            item(key = "detail_bottom_spacer") {
-                Spacer(modifier = Modifier.height(28.dp))
+            // 4. 선택적 간단 메모 필드
+            item(key = "detail_quick_note") {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = quickNote,
+                        onValueChange = { quickNote = it },
+                        label = { Text("이 날의 참고 메모 (선택)") },
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onSaveQuickNote(quickNote) },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("메모 저장")
+                    }
+                }
+            }
+
+            item(key = "detail_bottom") {
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
 
-    if (showAddMomentDialog) {
-        AddMomentDialog(
-            onDismiss = { showAddMomentDialog = false },
-            onAdd = { sourceType, snsPlatform, title, summary ->
-                onAddManualMoment(sourceType, snsPlatform, title, summary)
-                showAddMomentDialog = false
+    if (showAddNoteDialog) {
+        QuickNoteAddDialog(
+            onDismiss = { showAddNoteDialog = false },
+            onSave = { title, detail ->
+                onAddActivityNote(title, detail)
+                showAddNoteDialog = false
+            },
+        )
+    }
+
+    val targetVisit = aliasTargetVisit
+    if (targetVisit != null) {
+        SavePlaceAliasDialog(
+            initialName = targetVisit.placeName,
+            address = targetVisit.address,
+            onDismiss = { aliasTargetVisit = null },
+            onSave = { aliasName ->
+                onSavePlaceAlias(aliasName, targetVisit)
+                aliasTargetVisit = null
             },
         )
     }
@@ -429,107 +336,19 @@ fun DayDetailSheet(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("이 날의 기록을 지울까요?") },
-            text = { Text("${DateUtils.formatKoreanDate(dateKey)}에 작성된 일기와 수집 조각이 삭제됩니다.") },
+            title = { Text("이 날의 저장된 기록을 지울까요?") },
+            text = { Text("${DateUtils.formatKoreanDate(dateKey)}의 조회 캐시와 메모가 삭제됩니다. 폰 원본 사진·통화·문자는 삭제되지 않습니다.") },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false
-                    onDeleteEntry()
+                    onDeleteRecord()
                 }) {
                     Text("삭제", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("취소")
-                }
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("취소") }
             },
         )
     }
-}
-
-@Composable
-private fun AddMomentDialog(
-    onDismiss: () -> Unit,
-    onAdd: (SourceType, SnsPlatform, String, String) -> Unit,
-) {
-    var selectedType by remember { mutableStateOf(SourceType.SNS) }
-    var selectedSns by remember { mutableStateOf(SnsPlatform.INSTAGRAM) }
-    var title by remember { mutableStateOf("") }
-    var summary by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("SNS · 일상 조각 직접 추가") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = selectedType == SourceType.SNS,
-                        onClick = { selectedType = SourceType.SNS },
-                        label = { Text("📱 SNS 기록") },
-                    )
-                    FilterChip(
-                        selected = selectedType == SourceType.MANUAL,
-                        onClick = { selectedType = SourceType.MANUAL },
-                        label = { Text("✏️ 한 줄 메모") },
-                    )
-                }
-
-                if (selectedType == SourceType.SNS) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        listOf(
-                            SnsPlatform.INSTAGRAM,
-                            SnsPlatform.KAKAOTALK,
-                            SnsPlatform.THREADS,
-                            SnsPlatform.X_TWITTER,
-                            SnsPlatform.YOUTUBE,
-                            SnsPlatform.OTHER,
-                        ).forEach { platform ->
-                            FilterChip(
-                                selected = selectedSns == platform,
-                                onClick = { selectedSns = platform },
-                                label = { Text(platform.displayName, style = MaterialTheme.typography.labelSmall) },
-                            )
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text(if (selectedType == SourceType.SNS) "누구/어떤 글 (예: 내 스토리, 단톡방)" else "제목/키워드") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = summary,
-                    onValueChange = { summary = it },
-                    label = { Text("짧은 내용") },
-                    minLines = 2,
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val finalTitle = title.trim().ifBlank {
-                        if (selectedType == SourceType.SNS) selectedSns.displayName else "소소한 메모"
-                    }
-                    onAdd(selectedType, selectedSns, finalTitle, summary.trim())
-                },
-                enabled = summary.isNotBlank(),
-            ) {
-                Text("추가하기")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("취소") }
-        },
-    )
 }

@@ -4,14 +4,14 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.aiutil.daylog.App
-import com.aiutil.daylog.model.CapturedMoment
+import com.aiutil.daylog.model.ActivityItem
+import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.SnsPlatform
-import com.aiutil.daylog.model.SourceType
 import com.aiutil.daylog.util.DateUtils
 
 /**
- * 카카오톡, 인스타그램, 스레드, 텔레그램, 라인, X 등
- * SNS/메신저 알림을 실시간으로 포착해 날짜별 일상 조각으로 기록한다.
+ * 카카오톡, 인스타그램, 스레드, 텔레그램, 라인, X 등의 알림을
+ * 시간순 활동 데이터로 자동 기록하는 리스너 서비스.
  */
 class DaylogNotificationListener : NotificationListenerService() {
 
@@ -20,14 +20,12 @@ class DaylogNotificationListener : NotificationListenerService() {
         val pkg = statusNotification.packageName ?: return
         if (pkg == packageName) return
 
-        // 설정에서 SNS 수집이 꺼져 있으면 무시
         val settings = runCatching { App.settings.settings.value }.getOrNull()
-        if (settings != null && !settings.autoCollectSns) return
+        if (settings != null && !settings.collectSns) return
 
         val platform = SnsPlatform.fromPackageName(pkg) ?: return
         val notification = statusNotification.notification ?: return
 
-        // 그룹 요약 알림이나 진행 중인 시스템 알림(통화 중, 파일 전송 등) 제외
         val flags = notification.flags
         if ((flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
         if ((flags and Notification.FLAG_ONGOING_EVENT) != 0) return
@@ -43,21 +41,21 @@ class DaylogNotificationListener : NotificationListenerService() {
 
         val postTime = statusNotification.postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
         val dateKey = DateUtils.dateKeyFromMs(postTime)
-        val cleanTitle = rawTitle.take(28)
-        val cleanSummary = cleanBody(body, 60)
+        val cleanTitle = rawTitle.take(32)
+        val cleanDetail = cleanBody(body, 72)
 
-        val moment = CapturedMoment(
-            id = "sns_${platform.name}_${postTime}_${(cleanTitle + cleanSummary).hashCode()}",
+        val item = ActivityItem(
+            id = "sns_${platform.name}_${postTime}_${(cleanTitle + cleanDetail).hashCode()}",
             dateKey = dateKey,
             timestampMs = postTime,
-            sourceType = SourceType.SNS,
+            type = ActivityType.SNS,
             snsPlatform = platform,
             title = cleanTitle,
-            summary = cleanSummary,
+            detail = cleanDetail,
         )
 
         runCatching {
-            App.snsCaptures.appendMoment(moment)
+            App.snsCaptures.appendActivity(item)
         }
     }
 
@@ -72,7 +70,6 @@ class DaylogNotificationListener : NotificationListenerService() {
             "동기화 중",
             "보안 알림",
             "로그인 알림",
-            "사진을 보냈습니다",
         )
         return noisePatterns.any { lower.contains(it) } && body.length < 24
     }

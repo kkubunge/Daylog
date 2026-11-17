@@ -2,21 +2,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 네트워크 (선택적 Gemini AI 한 줄 다듬기) -->
+    <!-- 역지오코딩(좌표 → 주소 변환)용 네트워크 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- 사진 접근 (Android 13+ 및 Android 14 부분 선택, 하위 호환) -->
+    <!-- 사진 접근 및 사진 EXIF 위치 메타데이터 읽기 -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- 통화 기록, 연락처, 문자 메시지 자동 취합 -->
+    <!-- 통화 기록, 연락처, 문자 메시지 조회 -->
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- 이동 및 체류 장소 GPS 기록 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".App"
@@ -40,21 +49,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- 외부 앱(SNS, 메모, 브라우저 등)에서 텍스트 공유 수신 -->
+            <!-- 외부 앱에서 텍스트나 이미지를 해당 날짜 기록에 추가할 때 수신 -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
 
-            <!-- 갤러리/SNS에서 단일 이미지 공유 수신 -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
             </intent-filter>
 
-            <!-- 갤러리에서 다중 이미지(1~2장) 공유 수신 -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -62,7 +69,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 카카오톡, 인스타그램, 스레드, 텔레그램 등 SNS 알림 자동 수집 리스너 -->
+        <!-- SNS/메신저 알림 기록 수집 리스너 -->
         <service
             android:name=".collector.DaylogNotificationListener"
             android:exported="true"
@@ -72,6 +79,12 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- 이동 및 체류 장소 백그라운드 GPS 기록 서비스 -->
+        <service
+            android:name=".location.LocationTrackerService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

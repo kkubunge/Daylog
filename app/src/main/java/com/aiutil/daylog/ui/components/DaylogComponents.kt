@@ -1,18 +1,18 @@
 package com.aiutil.daylog.ui.components
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.util.LruCache
 import android.util.Size
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,27 +24,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Sms
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,24 +51,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.aiutil.daylog.model.CapturedMoment
-import com.aiutil.daylog.model.DayEntry
-import com.aiutil.daylog.model.MoodTag
-import com.aiutil.daylog.model.SourceType
+import com.aiutil.daylog.model.ActivityItem
+import com.aiutil.daylog.model.ActivityType
+import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -80,71 +73,14 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
- * 1장이면 와이드 폴라로이드, 2장이면 나란히 2분할로 임팩트 있는 사진을 보여준다.
- */
-@Composable
-fun HeroPhotoPair(
-    uris: List<String>,
-    onPhotoClick: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    singleHeight: Dp = 196.dp,
-    pairHeight: Dp = 160.dp,
-) {
-    val clean = uris.filter { it.isNotBlank() }.take(2)
-    if (clean.isEmpty()) return
-
-    if (clean.size == 1) {
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(singleHeight)
-                .clip(RoundedCornerShape(16.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                .clickable { onPhotoClick(clean[0]) },
-        ) {
-            DaylogPhotoImage(
-                uri = clean[0],
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    } else {
-        Row(
-            modifier = modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            clean.forEach { uri ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(pairHeight)
-                        .clip(RoundedCornerShape(14.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
-                        .clickable { onPhotoClick(uri) },
-                ) {
-                    DaylogPhotoImage(
-                        uri = uri,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * sample:// 가상 추억 아트와 실제 content://, file:// 이미지를 모두 지원하는 이미지 컴포넌트.
+ * 기기 사진 URI를 비동기로 디코딩·캐시해 깔끔하게 표시한다.
  */
 @Composable
 fun DaylogPhotoImage(
     uri: String,
     modifier: Modifier = Modifier,
-    maxDim: Int = 800,
+    maxDim: Int = 520,
 ) {
-    if (uri.startsWith("sample://")) {
-        SampleIllustrationPhoto(sampleKey = uri, modifier = modifier)
-        return
-    }
-
     val context = LocalContext.current
     var bitmap by remember(uri, maxDim) {
         mutableStateOf(PhotoImageCache.getCached(uri, maxDim))
@@ -152,7 +88,7 @@ fun DaylogPhotoImage(
 
     LaunchedEffect(uri, maxDim) {
         if (uri.isBlank() || bitmap != null) return@LaunchedEffect
-        delay(40L)
+        delay(30L)
         bitmap = withContext(Dispatchers.IO) {
             PhotoImageCache.load(context, uri, maxDim)
         }
@@ -166,7 +102,7 @@ fun DaylogPhotoImage(
         if (loaded != null) {
             Image(
                 bitmap = loaded,
-                contentDescription = "일기 대표 사진",
+                contentDescription = "촬영 사진",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -174,98 +110,22 @@ fun DaylogPhotoImage(
             Icon(
                 imageVector = Icons.Default.PhotoCamera,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                modifier = Modifier.size(28.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SampleIllustrationPhoto(
-    sampleKey: String,
-    modifier: Modifier = Modifier,
-) {
-    val palette = when (sampleKey) {
-        "sample://coffee_morning" -> Triple(
-            listOf(Color(0xFFF3DFC1), Color(0xFFDDA15E)),
-            Color(0xFF7F4F24),
-            "☕ 오후의 카페",
-        )
-        "sample://ocean_trip" -> Triple(
-            listOf(Color(0xFF90CAF9), Color(0xFF2E7D9B)),
-            Color(0xFF154360),
-            "🌊 1년 전 바다",
-        )
-        else -> Triple(
-            listOf(Color(0xFFF6BD60), Color(0xFFC86D51)),
-            Color(0xFF5D2E20),
-            "🌅 퇴근길 노을",
-        )
-    }
-
-    Box(modifier = modifier) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawRect(
-                brush = Brush.verticalGradient(palette.first),
-            )
-            // 따뜻한 태양/조명 원
-            drawCircle(
-                color = Color.White.copy(alpha = 0.45f),
-                radius = size.minDimension * 0.16f,
-                center = Offset(size.width * 0.72f, size.height * 0.3f),
-            )
-            // 부드러운 언덕/파도 실루엣
-            val path = Path().apply {
-                moveTo(0f, size.height * 0.75f)
-                cubicTo(
-                    size.width * 0.25f,
-                    size.height * 0.50f,
-                    size.width * 0.45f,
-                    size.height * 0.62f,
-                    size.width * 0.62f,
-                    size.height * 0.72f,
-                )
-                cubicTo(
-                    size.width * 0.78f,
-                    size.height * 0.82f,
-                    size.width * 0.90f,
-                    size.height * 0.72f,
-                    size.width,
-                    size.height * 0.64f,
-                )
-                lineTo(size.width, size.height)
-                lineTo(0f, size.height)
-                close()
-            }
-            drawPath(path = path, color = palette.second.copy(alpha = 0.42f))
-        }
-
-        Surface(
-            color = Color.Black.copy(alpha = 0.35f),
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(8.dp),
-        ) {
-            Text(
-                text = palette.third,
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                modifier = Modifier.size(24.dp),
             )
         }
     }
 }
 
 /**
- * 사진을 탭했을 때 크게 감상하는 라이트박스 다이얼로그.
+ * 사진을 탭했을 때 촬영 시각과 위치 정보와 함께 크게 보는 모달 다이얼로그.
  */
 @Composable
 fun PhotoLightboxDialog(
-    uri: String,
+    photo: DayPhoto,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -273,38 +133,26 @@ fun PhotoLightboxDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
+                .background(Color.Black.copy(alpha = 0.94f))
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
-            if (uri.startsWith("sample://")) {
-                SampleIllustrationPhoto(
-                    sampleKey = uri,
+            var fullBitmap by remember(photo.uri) { mutableStateOf<ImageBitmap?>(null) }
+            LaunchedEffect(photo.uri) {
+                fullBitmap = withContext(Dispatchers.IO) {
+                    PhotoImageCache.load(context, photo.uri, 1600)
+                }
+            }
+            val loaded = fullBitmap
+            if (loaded != null) {
+                Image(
+                    bitmap = loaded,
+                    contentDescription = photo.displayName,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp)
-                        .height(340.dp)
-                        .clip(RoundedCornerShape(18.dp)),
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 64.dp),
                 )
-            } else {
-                val context = LocalContext.current
-                var fullBitmap by remember(uri) { mutableStateOf<ImageBitmap?>(null) }
-                LaunchedEffect(uri) {
-                    fullBitmap = withContext(Dispatchers.IO) {
-                        PhotoImageCache.load(context, uri, 1600)
-                    }
-                }
-                val loaded = fullBitmap
-                if (loaded != null) {
-                    Image(
-                        bitmap = loaded,
-                        contentDescription = "확대 사진",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                    )
-                }
             }
 
             IconButton(
@@ -312,183 +160,319 @@ fun PhotoLightboxDialog(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(16.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                    .background(Color.White.copy(alpha = 0.14f), CircleShape),
             ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "닫기",
-                    tint = Color.White,
-                )
+                Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
             }
-        }
-    }
-}
 
-/**
- * 하루에 수집된 사진·통화·문자·SNS 개수를 작고 깔끔한 배지로 표시한다.
- */
-@Composable
-fun SourceBadgeRow(
-    entry: DayEntry,
-    modifier: Modifier = Modifier,
-) {
-    val visible = entry.moments.filterNot { it.isHidden }
-    val photoCount = maxOf(entry.candidatePhotos.size, entry.heroPhotoUris.size)
-    val callCount = visible.count { it.sourceType == SourceType.CALL }
-    val smsCount = visible.count { it.sourceType == SourceType.SMS }
-    val snsCount = visible.count { it.sourceType == SourceType.SNS }
-    val manualCount = visible.count { it.sourceType == SourceType.MANUAL }
-
-    if (photoCount == 0 && callCount == 0 && smsCount == 0 && snsCount == 0 && manualCount == 0) {
-        return
-    }
-
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (photoCount > 0) SourceCountPill("📷 사진 $photoCount")
-        if (callCount > 0) SourceCountPill("📞 통화 $callCount")
-        if (smsCount > 0) SourceCountPill("💬 문자 $smsCount")
-        if (snsCount > 0) SourceCountPill("📱 SNS $snsCount")
-        if (manualCount > 0) SourceCountPill("✏️ 메모 $manualCount")
-    }
-}
-
-@Composable
-private fun SourceCountPill(text: String) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(999.dp),
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-        )
-    }
-}
-
-@Composable
-fun MoodSelectorRow(
-    selectedMood: MoodTag,
-    onSelect: (MoodTag) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        MoodTag.entries.forEach { mood ->
-            FilterChip(
-                selected = mood == selectedMood,
-                onClick = { onSelect(mood) },
-                label = { Text("${mood.emoji} ${mood.label}", style = MaterialTheme.typography.labelMedium) },
-            )
-        }
-    }
-}
-
-/**
- * 상세 편집 화면에서 통화·문자·SNS·메모 조각 하나를 보여주는 행.
- */
-@Composable
-fun MomentRowItem(
-    moment: CapturedMoment,
-    onAppendToNote: ((CapturedMoment) -> Unit)? = null,
-    onToggleHide: ((CapturedMoment) -> Unit)? = null,
-    onDelete: ((CapturedMoment) -> Unit)? = null,
-) {
-    val icon = when (moment.sourceType) {
-        SourceType.PHOTO -> Icons.Default.PhotoCamera
-        SourceType.CALL -> Icons.Default.Call
-        SourceType.SMS -> Icons.Default.Sms
-        SourceType.SNS -> Icons.Default.Forum
-        SourceType.MANUAL -> Icons.Default.EditNote
-    }
-    val typeLabel = if (moment.sourceType == SourceType.SNS) {
-        moment.snsPlatform.displayName
-    } else {
-        moment.sourceType.label
-    }
-    val alpha = if (moment.isHidden) 0.45f else 1f
-
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f * alpha),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
+            // 하단 촬영 시각 & 장소 메타데이터 바
+            Surface(
+                color = Color.Black.copy(alpha = 0.68f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = typeLabel,
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "$typeLabel · ${moment.title}",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = DateUtils.formatTimeHm(moment.timestampMs),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = moment.summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-            )
-            if (onAppendToNote != null || onToggleHide != null || onDelete != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (onAppendToNote != null && !moment.isHidden) {
-                        TextButton(onClick = { onAppendToNote(moment) }) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("본문에 넣기", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    if (onToggleHide != null) {
-                        IconButton(onClick = { onToggleHide(moment) }, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                imageVector = if (moment.isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = if (moment.isHidden) "다시 포함" else "요약에서 숨기기",
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    if (onDelete != null) {
-                        IconButton(onClick = { onDelete(moment) }, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = "조각 삭제",
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text(
+                        text = "${DateUtils.formatTimeHm(photo.dateTakenMs)} · ${photo.folderName.ifBlank { photo.displayName }}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    if (photo.placeLabel.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "위치: ${photo.placeLabel}",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * 이동 및 체류 장소 타임라인 카드.
+ */
+@Composable
+fun PlaceVisitTimelineItem(
+    visit: PlaceVisit,
+    isLast: Boolean,
+    onOpenMap: (PlaceVisit) -> Unit,
+    onSaveAlias: (PlaceVisit) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (visit.distanceFromPrevMeters > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 15.dp, top = 2.dp, bottom = 4.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(14.dp)
+                        .background(MaterialTheme.colorScheme.outline),
+                )
+                Spacer(modifier = Modifier.width(14.dp))
+                Text(
+                    text = "이동 ${DateUtils.formatDistanceKorean(visit.distanceFromPrevMeters)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenMap(visit) },
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                // 좌측 타임라인 도트
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(24.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(if (visit.isStay) 10.dp else 7.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (visit.isStay) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            ),
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    val timeText = if (visit.endMs > visit.startMs + 60_000L) {
+                        "${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} · ${DateUtils.formatStayMinutes(visit.durationMinutes)}"
+                    } else {
+                        "${DateUtils.formatTimeHm(visit.startMs)} · ${visit.source.label}"
+                    }
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = visit.placeName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (visit.address.isNotBlank() && visit.address != visit.placeName) {
+                        Text(
+                            text = visit.address,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { onSaveAlias(visit) },
+                    modifier = Modifier.size(34.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.BookmarkAdd,
+                        contentDescription = "장소 이름 저장",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                IconButton(
+                    onClick = { onOpenMap(visit) },
+                    modifier = Modifier.size(34.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Map,
+                        contentDescription = "지도에서 보기",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+
+        if (!isLast) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 15.dp)
+                    .width(1.dp)
+                    .height(6.dp)
+                    .background(MaterialTheme.colorScheme.outline),
+            )
+        }
+    }
+}
+
+/**
+ * 시간순 활동 내역(통화 · 문자 · SNS · 메모)을 깔끔한 모노톤 행으로 표시한다.
+ */
+@Composable
+fun ActivityLogRow(
+    item: ActivityItem,
+    onDelete: (() -> Unit)? = null,
+) {
+    val icon = when (item.type) {
+        ActivityType.PLACE -> Icons.Default.LocationOn
+        ActivityType.PHOTO -> Icons.Default.PhotoCamera
+        ActivityType.CALL -> Icons.Default.Call
+        ActivityType.SMS -> Icons.Default.Sms
+        ActivityType.SNS -> Icons.Default.Forum
+        ActivityType.NOTE -> Icons.Default.EditNote
+    }
+    val typeLabel = if (item.type == ActivityType.SNS) item.snsPlatform.displayName else item.type.label
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            Text(
+                text = DateUtils.formatTimeHm(item.timestampMs),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(46.dp),
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = typeLabel,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        text = typeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (item.detail.isNotBlank()) {
+                    Text(
+                        text = item.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            if (onDelete != null && item.type == ActivityType.NOTE) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteOutline,
+                        contentDescription = "메모 삭제",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 선택한 날짜의 데이터 건수를 한눈에 보여주는 깔끔한 모노톤 요약 바.
+ */
+@Composable
+fun SummaryMetricStrip(
+    placeCount: Int,
+    photoCount: Int,
+    callCount: Int,
+    smsCount: Int,
+    snsCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        MetricBox("장소", placeCount, Modifier.weight(1f))
+        MetricBox("사진", photoCount, Modifier.weight(1f))
+        MetricBox("통화", callCount, Modifier.weight(1f))
+        MetricBox("문자", smsCount, Modifier.weight(1f))
+        MetricBox("SNS", snsCount, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun MetricBox(label: String, count: Int, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(vertical = 8.dp),
+        ) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (count > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+fun openLocationInMap(context: Context, latitude: Double, longitude: Double, label: String) {
+    val encoded = Uri.encode(label.ifBlank { "위치" })
+    val geoUri = Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude($encoded)")
+    val intent = Intent(Intent.ACTION_VIEW, geoUri)
+    runCatching { context.startActivity(intent) }
 }
 
 private object PhotoImageCache {
