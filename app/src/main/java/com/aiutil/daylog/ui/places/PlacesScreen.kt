@@ -54,6 +54,7 @@ fun PlacesScreen(
     aliases: List<SavedPlaceAlias>,
     isTrackingRunning: Boolean,
     hasLocationPermission: Boolean,
+    stayThresholdMin: Int = 3,
     onToggleTracking: () -> Unit,
     onCheckInNow: () -> Unit,
     onSaveAlias: (name: String, visit: PlaceVisit) -> Unit,
@@ -270,6 +271,7 @@ fun PlacesScreen(
                     PlaceVisitTimelineItem(
                         visit = visit,
                         isLast = true,
+                        stayThresholdMin = stayThresholdMin,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
                         onClassifyWithAi = onClassifyPlaceWithAi,

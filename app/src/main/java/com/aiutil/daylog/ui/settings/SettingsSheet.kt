@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -51,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -79,6 +81,7 @@ fun SettingsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showClearAllConfirm by remember { mutableStateOf(false) }
     var showRangePicker by remember { mutableStateOf(false) }
+    var showCustomStayDialog by remember { mutableStateOf(false) }
     var batchStartKey by remember(todayKey) { mutableStateOf(DateUtils.daysAgoKey(todayKey, 6)) }
     var batchEndKey by remember(todayKey) { mutableStateOf(todayKey) }
     var apiKeyDraft by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
@@ -204,6 +207,38 @@ fun SettingsSheet(
                                     label = { Text("${mins}분") },
                                 )
                             }
+                        }
+
+                        HorizontalDivider()
+
+                        Text("체류 장소 기준 시간 (큰 점 표시)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "${settings.stayThresholdMin}분 이상 머물거나 같은 곳에서 사진 2장 이상 촬영 시 큰 점으로 표시합니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val stayPresets = listOf(1, 3, 5, 10, 15, 30)
+                        val isCustomStay = settings.stayThresholdMin !in stayPresets
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            stayPresets.forEach { mins ->
+                                FilterChip(
+                                    selected = settings.stayThresholdMin == mins,
+                                    onClick = { onUpdateSettings { it.copy(stayThresholdMin = mins) } },
+                                    label = { Text("${mins}분") },
+                                )
+                            }
+                            FilterChip(
+                                selected = isCustomStay,
+                                onClick = { showCustomStayDialog = true },
+                                label = {
+                                    Text(if (isCustomStay) "직접 (${settings.stayThresholdMin}분)" else "직접 입력")
+                                },
+                            )
                         }
 
                         SettingSwitchRow(
@@ -449,6 +484,53 @@ fun SettingsSheet(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+
+    if (showCustomStayDialog) {
+        var stayMinutesDraft by remember(settings.stayThresholdMin) {
+            mutableStateOf(settings.stayThresholdMin.toString())
+        }
+        val parsedMin = stayMinutesDraft.trim().toIntOrNull()
+        val isValidMin = parsedMin != null && parsedMin in 1..360
+        AlertDialog(
+            onDismissRequest = { showCustomStayDialog = false },
+            title = { Text("체류 기준 시간 설정") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "입력한 시간(분) 이상 머물면 타임라인에 큰 점(체류 장소)으로 표시합니다. (1~360분)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = stayMinutesDraft,
+                        onValueChange = { input ->
+                            stayMinutesDraft = input.filter { it.isDigit() }.take(3)
+                        },
+                        label = { Text("체류 기준 (분)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (parsedMin != null && isValidMin) {
+                            onUpdateSettings { it.copy(stayThresholdMin = parsedMin) }
+                        }
+                        showCustomStayDialog = false
+                    },
+                    enabled = isValidMin,
+                ) {
+                    Text("적용")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomStayDialog = false }) { Text("취소") }
+            },
+        )
     }
 
     if (showRangePicker) {

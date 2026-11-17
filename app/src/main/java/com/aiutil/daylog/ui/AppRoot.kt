@@ -606,6 +606,7 @@ fun AppRoot(
                     isAiBusy = isAiBusy,
                     hasGeminiKey = hasGeminiKey,
                     permissionStatus = permissionStatus,
+                    stayThresholdMin = settings.stayThresholdMin,
                     onSelectDate = { dateKey -> selectAndLoadDate(dateKey) },
                     onRefreshDate = { dateKey -> scanDate(dateKey, showToast = true) },
                     onGenerateAiSummary = { dateKey -> generateAiSummary(dateKey) },
@@ -658,6 +659,7 @@ fun AppRoot(
                     aliases = aliases,
                     isTrackingRunning = isTrackingRunning,
                     hasLocationPermission = permissionStatus.locationGranted,
+                    stayThresholdMin = settings.stayThresholdMin,
                     onToggleTracking = { toggleLocationTracking() },
                     onCheckInNow = { checkInCurrentLocation(todayKey) },
                     onSaveAlias = { name, visit ->
@@ -683,6 +685,7 @@ fun AppRoot(
             record = recordsByDate[sheetDate],
             isScanning = isScanning,
             isAiBusy = isAiBusy,
+            stayThresholdMin = settings.stayThresholdMin,
             onDismiss = { detailSheetDateKey = null },
             onRefreshDate = { scanDate(sheetDate, showToast = true) },
             onSaveQuickNote = { note ->

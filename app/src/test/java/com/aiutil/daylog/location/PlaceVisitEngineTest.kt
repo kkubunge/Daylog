@@ -2,6 +2,7 @@ package com.aiutil.daylog.location
 
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.PlaceSource
+import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.SavedPlaceAlias
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -139,5 +140,32 @@ class PlaceVisitEngineTest {
         assertEquals(1, visits.size)
         assertEquals("백곡캠핑장", visits[0].nearbyPoi)
         assertEquals(62L, visits[0].durationMinutes)
+    }
+
+    @Test
+    fun `사용자 설정 체류 기준 시간은 시간 판정에만 적용되고 사진 2장 이상 조건은 그대로 유지된다`() {
+        val t0 = 1_794_880_000_000L
+        val stay5MinSingle = PlaceVisit(
+            id = "v1",
+            dateKey = "2026-11-17",
+            startMs = t0,
+            endMs = t0 + 5 * 60_000L,
+            latitude = 37.5,
+            longitude = 127.0,
+            placeName = "강남역",
+            sampleCount = 1,
+        )
+        assertTrue(stay5MinSingle.isStayWithThreshold(3))
+        assertTrue(stay5MinSingle.isStayWithThreshold(5))
+        assertTrue(!stay5MinSingle.isStayWithThreshold(10))
+
+        // 사진/샘플 2장 이상(sampleCount = 2)은 기준 시간을 30분으로 높여도 그대로 체류(큰 점)로 유지
+        val stay1MinTwoPhotos = stay5MinSingle.copy(
+            id = "v2",
+            endMs = t0 + 60_000L,
+            sampleCount = 2,
+            source = PlaceSource.PHOTO_EXIF,
+        )
+        assertTrue(stay1MinTwoPhotos.isStayWithThreshold(30))
     }
 }

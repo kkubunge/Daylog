@@ -404,10 +404,12 @@ fun PhotoLightboxDialog(
 fun PlaceVisitTimelineItem(
     visit: PlaceVisit,
     isLast: Boolean,
+    stayThresholdMin: Int = 3,
     onOpenMap: (PlaceVisit) -> Unit,
     onSaveAlias: (PlaceVisit) -> Unit,
     onClassifyWithAi: ((PlaceVisit) -> Unit)? = null,
 ) {
+    val isStaySpot = visit.isStayWithThreshold(stayThresholdMin)
     Column(modifier = Modifier.fillMaxWidth()) {
         if (visit.distanceFromPrevMeters > 0) {
             Row(
@@ -448,10 +450,10 @@ fun PlaceVisitTimelineItem(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(if (visit.isStay) 10.dp else 7.dp)
+                            .size(if (isStaySpot) 10.dp else 7.dp)
                             .clip(CircleShape)
                             .background(
-                                if (visit.isStay) MaterialTheme.colorScheme.primary
+                                if (isStaySpot) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             ),
                     )

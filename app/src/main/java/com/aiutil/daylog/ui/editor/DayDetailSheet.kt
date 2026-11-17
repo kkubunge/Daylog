@@ -75,6 +75,7 @@ fun DayDetailSheet(
     record: DayRecord?,
     isScanning: Boolean,
     isAiBusy: Boolean,
+    stayThresholdMin: Int = 3,
     onDismiss: () -> Unit,
     onRefreshDate: () -> Unit,
     onSaveQuickNote: (String) -> Unit,
@@ -181,6 +182,7 @@ fun DayDetailSheet(
                     PlaceVisitTimelineItem(
                         visit = visit,
                         isLast = idx == current.places.lastIndex,
+                        stayThresholdMin = stayThresholdMin,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
                         onClassifyWithAi = onClassifyPlaceWithAi,

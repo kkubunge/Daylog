@@ -95,6 +95,7 @@ fun CalendarScreen(
     isAiBusy: Boolean,
     hasGeminiKey: Boolean,
     permissionStatus: PermissionStatus,
+    stayThresholdMin: Int = 3,
     onSelectDate: (String) -> Unit,
     onRefreshDate: (String) -> Unit,
     onGenerateAiSummary: (String) -> Unit,
@@ -557,6 +558,7 @@ fun CalendarScreen(
                     PlaceVisitTimelineItem(
                         visit = visit,
                         isLast = idx == places.lastIndex,
+                        stayThresholdMin = stayThresholdMin,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
                         onClassifyWithAi = onClassifyPlaceWithAi,

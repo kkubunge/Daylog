@@ -124,7 +124,15 @@ data class PlaceVisit(
         get() = ((endMs - startMs) / 60_000L).coerceAtLeast(0L)
 
     val isStay: Boolean
-        get() = durationMinutes >= 3L || source == PlaceSource.CHECK_IN || sampleCount >= 2
+        get() = isStayWithThreshold(3)
+
+    /**
+     * 사용자가 설정한 체류 기준 시간(분) 또는 2회 이상 촬영/체크인 여부에 따라 체류(큰 점)로 판정한다.
+     */
+    fun isStayWithThreshold(stayThresholdMin: Int = 3): Boolean {
+        val threshold = stayThresholdMin.coerceAtLeast(1).toLong()
+        return durationMinutes >= threshold || source == PlaceSource.CHECK_IN || sampleCount >= 2
+    }
 }
 
 /**
@@ -215,6 +223,7 @@ data class DaylogSettings(
     val trackLocation: Boolean = true,
     val extractPhotoGps: Boolean = true,
     val locationIntervalMin: Int = 3,
+    val stayThresholdMin: Int = 3,
     val geminiApiKey: String = "",
 )
 
