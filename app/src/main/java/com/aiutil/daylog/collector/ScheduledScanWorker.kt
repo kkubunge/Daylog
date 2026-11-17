@@ -35,10 +35,14 @@ class ScheduledScanWorker(
         val runAtMs = System.currentTimeMillis()
 
         val collector = App.collector
+        val hasFineLoc = ContextCompat.checkSelfPermission(
+            applicationContext,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
         val hasAnyPermission = collector.hasPhotoPermission() ||
             collector.hasCallLogPermission() ||
             collector.hasSmsPermission() ||
-            collector.hasLocationPermission()
+            hasFineLoc
 
         if (!hasAnyPermission) {
             val failedLogs = window.dateKeys.map { key ->
