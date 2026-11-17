@@ -76,6 +76,7 @@ data class DayPhoto(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val placeLabel: String = "",
+    val aiCaption: String = "",
 )
 
 /**
@@ -118,6 +119,7 @@ data class ActivityItem(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val placeLabel: String = "",
+    val aiCaption: String = "",
 )
 
 /**
@@ -142,17 +144,27 @@ data class DayRecord(
     val places: List<PlaceVisit> = emptyList(),
     val activities: List<ActivityItem> = emptyList(),
     val quickNote: String = "",
+    val aiSummary: String = "",
     val updatedAtMs: Long = 0L,
 ) {
     val hasAnyData: Boolean
         get() = photos.isNotEmpty() ||
             places.isNotEmpty() ||
             activities.isNotEmpty() ||
-            quickNote.isNotBlank()
+            quickNote.isNotBlank() ||
+            aiSummary.isNotBlank()
 
     val totalMoveMeters: Int
         get() = places.sumOf { it.distanceFromPrevMeters }
 }
+
+/**
+ * Gemini 자연어 기록 검색 응답.
+ */
+data class AiSearchResult(
+    val answer: String,
+    val matchedDateKeys: List<String> = emptyList(),
+)
 
 /**
  * 데이로그 수집 및 위치 추적 설정.
@@ -168,6 +180,7 @@ data class DaylogSettings(
     val trackLocation: Boolean = true,
     val extractPhotoGps: Boolean = true,
     val locationIntervalMin: Int = 3,
+    val geminiApiKey: String = "",
 )
 
 /**

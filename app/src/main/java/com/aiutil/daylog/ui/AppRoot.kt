@@ -55,6 +55,7 @@ import com.aiutil.daylog.App
 import com.aiutil.daylog.location.LocationTrackerService
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
+import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.PermissionStatus
 import com.aiutil.daylog.model.PlaceSource
@@ -109,9 +110,12 @@ fun AppRoot(
     var selectedDateKey by rememberSaveable { mutableStateOf(todayKey) }
     var detailSheetDateKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    var lightboxPhoto by remember { mutableStateOf<DayPhoto?>(null) }
+    var lightboxTarget by remember { mutableStateOf<Pair<String, DayPhoto>?>(null) }
     var isScanning by remember { mutableStateOf(false) }
+    var isAiBusy by remember { mutableStateOf(false) }
+    var aiSearchResult by remember { mutableStateOf<AiSearchResult?>(null) }
     var autoScannedDates by remember { mutableStateOf(setOf<String>()) }
+    val hasGeminiKey = settings.geminiApiKey.isNotBlank()
 
     fun scanDate(dateKey: String, showToast: Boolean = false) {
         if (!permissionStatus.anyDataGranted && !permissionStatus.snsNotificationEnabled) {
@@ -218,6 +222,75 @@ fun AppRoot(
             App.settings.update { it.copy(trackLocation = true) }
             LocationTrackerService.start(context)
             scope.launch { snackbarHostState.showSnackbar("이동 및 체류 장소 자동 기록을 시작했습니다.") }
+        }
+    }
+
+    fun generateAiSummary(dateKey: String) {
+        if (!hasGeminiKey) {
+            showSettings = true
+            scope.launch { snackbarHostState.showSnackbar("설정에서 Gemini API 키를 먼저 입력해 주세요.") }
+            return
+        }
+        val rec = App.daylogs.getRecord(dateKey) ?: return
+        if (isAiBusy) return
+        scope.launch {
+            isAiBusy = true
+            try {
+                val summary = App.gemini.summarizeDayFacts(rec, settings.geminiApiKey)
+                if (summary != null) {
+                    App.daylogs.updateAiSummary(dateKey, summary)
+                } else {
+                    snackbarHostState.showSnackbar("AI 요약 생성에 실패했습니다. API 키와 네트워크를 확인해 주세요.")
+                }
+            } finally {
+                isAiBusy = false
+            }
+        }
+    }
+
+    fun askAiAboutRecords(query: String) {
+        if (!hasGeminiKey) {
+            showSettings = true
+            scope.launch { snackbarHostState.showSnackbar("설정에서 Gemini API 키를 먼저 입력해 주세요.") }
+            return
+        }
+        if (isAiBusy) return
+        scope.launch {
+            isAiBusy = true
+            try {
+                val result = App.gemini.askAboutRecords(query, records, settings.geminiApiKey)
+                if (result != null) {
+                    aiSearchResult = result
+                } else {
+                    snackbarHostState.showSnackbar("AI 질문 검색에 실패했습니다. API 키와 네트워크를 확인해 주세요.")
+                }
+            } finally {
+                isAiBusy = false
+            }
+        }
+    }
+
+    fun analyzeTargetPhoto(dateKey: String, photo: DayPhoto) {
+        if (!hasGeminiKey) {
+            lightboxTarget = null
+            showSettings = true
+            scope.launch { snackbarHostState.showSnackbar("설정에서 Gemini API 키를 먼저 입력해 주세요.") }
+            return
+        }
+        if (isAiBusy) return
+        scope.launch {
+            isAiBusy = true
+            try {
+                val caption = App.gemini.analyzePhoto(context, photo.uri, settings.geminiApiKey)
+                if (caption != null) {
+                    App.daylogs.updatePhotoAiCaption(dateKey, photo.uri, caption)
+                    lightboxTarget = dateKey to photo.copy(aiCaption = caption)
+                } else {
+                    snackbarHostState.showSnackbar("사진 분석에 실패했습니다. API 키와 네트워크를 확인해 주세요.")
+                }
+            } finally {
+                isAiBusy = false
+            }
         }
     }
 
@@ -366,9 +439,12 @@ fun AppRoot(
                     selectedDateKey = selectedDateKey,
                     recordsByDate = recordsByDate,
                     isScanning = isScanning,
+                    isAiBusy = isAiBusy,
+                    hasGeminiKey = hasGeminiKey,
                     permissionStatus = permissionStatus,
                     onSelectDate = { dateKey -> selectAndLoadDate(dateKey) },
                     onRefreshDate = { dateKey -> scanDate(dateKey, showToast = true) },
+                    onGenerateAiSummary = { dateKey -> generateAiSummary(dateKey) },
                     onOpenFullDetail = { dateKey -> detailSheetDateKey = dateKey },
                     onCheckInCurrentLocation = { dateKey -> checkInCurrentLocation(dateKey) },
                     onAddNote = { dateKey, title, detail ->
@@ -392,12 +468,17 @@ fun AppRoot(
                         App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
                         scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
                     },
-                    onPhotoClick = { photo -> lightboxPhoto = photo },
+                    onPhotoClick = { photo -> lightboxTarget = selectedDateKey to photo },
                     onOpenPermissions = { showSettings = true },
                 )
 
                 DaylogTab.FEED -> FeedScreen(
                     records = records,
+                    hasGeminiKey = hasGeminiKey,
+                    isAiSearching = isAiBusy,
+                    aiSearchResult = aiSearchResult,
+                    onAskAi = { q -> askAiAboutRecords(q) },
+                    onClearAiSearch = { aiSearchResult = null },
                     onSelectDateInCalendar = { dateKey ->
                         selectAndLoadDate(dateKey)
                         activeTab = DaylogTab.CALENDAR
@@ -465,7 +546,7 @@ fun AppRoot(
                 App.daylogs.deleteRecord(sheetDate)
                 detailSheetDateKey = null
             },
-            onPhotoClick = { photo -> lightboxPhoto = photo },
+            onPhotoClick = { photo -> lightboxTarget = sheetDate to photo },
         )
     }
 
@@ -496,11 +577,14 @@ fun AppRoot(
         )
     }
 
-    val photoToShow = lightboxPhoto
-    if (photoToShow != null) {
+    val targetLightbox = lightboxTarget
+    if (targetLightbox != null) {
         PhotoLightboxDialog(
-            photo = photoToShow,
-            onDismiss = { lightboxPhoto = null },
+            photo = targetLightbox.second,
+            hasGeminiKey = hasGeminiKey,
+            isAnalyzing = isAiBusy,
+            onAnalyzePhoto = { analyzeTargetPhoto(targetLightbox.first, targetLightbox.second) },
+            onDismiss = { lightboxTarget = null },
         )
     }
 }

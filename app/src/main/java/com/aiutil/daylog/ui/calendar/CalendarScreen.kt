@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.MyLocation
@@ -87,9 +88,12 @@ fun CalendarScreen(
     selectedDateKey: String,
     recordsByDate: Map<String, DayRecord>,
     isScanning: Boolean,
+    isAiBusy: Boolean,
+    hasGeminiKey: Boolean,
     permissionStatus: PermissionStatus,
     onSelectDate: (String) -> Unit,
     onRefreshDate: (String) -> Unit,
+    onGenerateAiSummary: (String) -> Unit,
     onOpenFullDetail: (String) -> Unit,
     onCheckInCurrentLocation: (String) -> Unit,
     onAddNote: (dateKey: String, title: String, detail: String) -> Unit,
@@ -376,6 +380,74 @@ fun CalendarScreen(
                 smsCount = smsCount,
                 snsCount = snsCount,
             )
+        }
+
+        // 3.5 AI 하루 브리핑 카드 (데이터가 있을 때)
+        if (selectedRecord != null && selectedRecord.hasAnyData) {
+            item(key = "ai_briefing_card") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "AI 데이터 브리핑",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                            TextButton(
+                                onClick = { onGenerateAiSummary(selectedDateKey) },
+                                enabled = !isAiBusy,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            ) {
+                                if (isAiBusy) {
+                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Text(
+                                        text = when {
+                                            !hasGeminiKey -> "API 키 설정"
+                                            selectedRecord.aiSummary.isBlank() -> "요약 생성"
+                                            else -> "다시 요약"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }
+                        if (selectedRecord.aiSummary.isNotBlank()) {
+                            Text(
+                                text = selectedRecord.aiSummary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        } else {
+                            Text(
+                                text = "이동 동선, 통화, 문자/SNS 속 핵심 일정·정보만 깔끔하게 요약해 줍니다.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // 4. 빠른 액션 & 섹션 필터

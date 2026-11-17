@@ -29,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -42,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DaylogSettings
 import com.aiutil.daylog.model.PermissionStatus
@@ -65,6 +68,8 @@ fun SettingsSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showClearAllConfirm by remember { mutableStateOf(false) }
+    var apiKeyDraft by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
+    var showApiKey by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -270,7 +275,51 @@ fun SettingsSheet(
                 }
             }
 
-            // 4. 백업 및 초기화
+            // 4. Gemini AI 데이터 분석·검색 연동 (선택)
+            item(key = "gemini_card") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Gemini AI 도우미 (선택)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "API 키를 넣으면 일자별 핵심 브리핑, 자연어 기록 검색(예: 지난주에 간 곳), 사진/영수증 내용 읽기를 쓸 수 있습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedTextField(
+                            value = apiKeyDraft,
+                            onValueChange = { apiKeyDraft = it },
+                            label = { Text("Gemini API 키") },
+                            singleLine = true,
+                            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                TextButton(onClick = { showApiKey = !showApiKey }) {
+                                    Text(if (showApiKey) "숨김" else "보기", style = MaterialTheme.typography.labelSmall)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Button(
+                                onClick = {
+                                    onUpdateSettings { it.copy(geminiApiKey = apiKeyDraft.trim()) }
+                                },
+                            ) {
+                                Text("API 키 저장")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. 백업 및 초기화
             item(key = "backup_card") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(

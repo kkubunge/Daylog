@@ -1,6 +1,7 @@
 package com.aiutil.daylog
 
 import android.app.Application
+import com.aiutil.daylog.ai.GeminiClient
 import com.aiutil.daylog.collector.PhoneDataCollector
 import com.aiutil.daylog.data.DaylogStore
 import com.aiutil.daylog.data.LocationVisitStore
@@ -10,7 +11,7 @@ import com.aiutil.daylog.location.GeocodingHelper
 import java.io.File
 
 /**
- * 데이로그 전역 데이터 스토어 및 수집/위치 엔진을 초기화한다.
+ * 데이로그 전역 데이터 스토어 및 수집/위치/AI 엔진을 초기화한다.
  */
 class App : Application() {
 
@@ -31,6 +32,7 @@ class App : Application() {
             locationVisitStore = locationVisits,
             geocoder = geocoder,
         )
+        gemini = GeminiClient()
     }
 
     companion object {
@@ -53,6 +55,9 @@ class App : Application() {
             private set
 
         lateinit var collector: PhoneDataCollector
+            private set
+
+        lateinit var gemini: GeminiClient
             private set
     }
 }

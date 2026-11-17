@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
@@ -37,11 +38,13 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -123,6 +126,9 @@ fun DaylogPhotoImage(
 @Composable
 fun PhotoLightboxDialog(
     photo: DayPhoto,
+    hasGeminiKey: Boolean = false,
+    isAnalyzing: Boolean = false,
+    onAnalyzePhoto: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -165,25 +171,72 @@ fun PhotoLightboxDialog(
                 Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
             }
 
-            // 하단 촬영 시각 & 장소 메타데이터 바
+            // 하단 촬영 시각 · 장소 · AI 분석 바
             Surface(
-                color = Color.Black.copy(alpha = 0.68f),
+                color = Color.Black.copy(alpha = 0.76f),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(16.dp),
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .clickable(enabled = false) {},
             ) {
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Text(
-                        text = "${DateUtils.formatTimeHm(photo.dateTakenMs)} · ${photo.folderName.ifBlank { photo.displayName }}",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    if (photo.placeLabel.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${DateUtils.formatTimeHm(photo.dateTakenMs)} · ${photo.folderName.ifBlank { photo.displayName }}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            if (photo.placeLabel.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "위치: ${photo.placeLabel}",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+
+                        if (onAnalyzePhoto != null) {
+                            TextButton(
+                                onClick = onAnalyzePhoto,
+                                enabled = !isAnalyzing,
+                            ) {
+                                if (isAnalyzing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(15.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color.White,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(15.dp),
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (photo.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
+                                    color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+
+                    if (photo.aiCaption.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "위치: ${photo.placeLabel}",
-                            color = Color.White.copy(alpha = 0.8f),
+                            text = photo.aiCaption,
+                            color = Color.White.copy(alpha = 0.92f),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }

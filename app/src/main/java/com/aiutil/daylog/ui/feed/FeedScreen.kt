@@ -12,16 +12,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.ActivityType
+import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.ui.components.SummaryMetricStrip
 import com.aiutil.daylog.util.DateUtils
@@ -55,6 +63,11 @@ private enum class FeedFilter(val label: String) {
 @Composable
 fun FeedScreen(
     records: List<DayRecord>,
+    hasGeminiKey: Boolean,
+    isAiSearching: Boolean,
+    aiSearchResult: AiSearchResult?,
+    onAskAi: (String) -> Unit,
+    onClearAiSearch: () -> Unit,
     onSelectDateInCalendar: (String) -> Unit,
     onOpenDetail: (String) -> Unit,
     onOpenSettings: () -> Unit,
@@ -79,8 +92,13 @@ fun FeedScreen(
 
             rec.dateKey.contains(q) ||
                 rec.quickNote.lowercase().contains(q) ||
+                rec.aiSummary.lowercase().contains(q) ||
                 rec.places.any { it.placeName.lowercase().contains(q) || it.address.lowercase().contains(q) } ||
-                rec.photos.any { it.placeLabel.lowercase().contains(q) || it.displayName.lowercase().contains(q) } ||
+                rec.photos.any {
+                    it.placeLabel.lowercase().contains(q) ||
+                        it.displayName.lowercase().contains(q) ||
+                        it.aiCaption.lowercase().contains(q)
+                } ||
                 rec.activities.any { it.title.lowercase().contains(q) || it.detail.lowercase().contains(q) }
         }
     }
@@ -92,15 +110,53 @@ fun FeedScreen(
     ) {
         item(key = "feed_search") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("장소, 연락처, 문자·SNS 내용, 날짜 검색…", style = MaterialTheme.typography.bodySmall) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = {
+                            Text(
+                                "키워드 검색 또는 AI 질문 (예: 지난주 간 곳)",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = { onAskAi(query) },
+                        enabled = !isAiSearching && query.isNotBlank(),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        if (isAiSearching) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("AI 질문", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+
+                if (!hasGeminiKey) {
+                    Text(
+                        text = "AI 질문 검색을 쓰려면 설정에서 Gemini API 키를 입력하세요.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -111,6 +167,57 @@ fun FeedScreen(
                             onClick = { filter = f },
                             label = { Text(f.label, style = MaterialTheme.typography.labelMedium) },
                         )
+                    }
+                }
+            }
+        }
+
+        // AI 질문 응답 카드
+        if (aiSearchResult != null) {
+            item(key = "ai_search_result") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("AI 검색 결과", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                            }
+                            IconButton(onClick = onClearAiSearch, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(16.dp))
+                            }
+                        }
+
+                        Text(
+                            text = aiSearchResult.answer,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+
+                        if (aiSearchResult.matchedDateKeys.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                aiSearchResult.matchedDateKeys.forEach { dateKey ->
+                                    AssistChip(
+                                        onClick = { onSelectDateInCalendar(dateKey) },
+                                        label = { Text("${DateUtils.formatShortKoreanDate(dateKey)} 보기") },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

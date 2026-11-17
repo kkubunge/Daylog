@@ -132,7 +132,12 @@ class PhoneDataCollector(
 
         dateKeys.map { key ->
             val current = existingMap[key]
-            val photos = photosMap[key] ?: current?.photos.orEmpty()
+            val prevCaptions = current?.photos.orEmpty().associate { it.uri to it.aiCaption }
+            val rawPhotos = photosMap[key] ?: current?.photos.orEmpty()
+            val photos = rawPhotos.map { ph ->
+                val savedCaption = prevCaptions[ph.uri].orEmpty()
+                if (ph.aiCaption.isBlank() && savedCaption.isNotBlank()) ph.copy(aiCaption = savedCaption) else ph
+            }
             val manualNotes = current?.activities.orEmpty().filter { it.type == ActivityType.NOTE }
             val mergedActivities = (
                 manualNotes +
@@ -153,6 +158,7 @@ class PhoneDataCollector(
                 places = mergedPlaces,
                 activities = mergedActivities,
                 quickNote = current?.quickNote.orEmpty(),
+                aiSummary = current?.aiSummary.orEmpty(),
                 updatedAtMs = System.currentTimeMillis(),
             )
         }

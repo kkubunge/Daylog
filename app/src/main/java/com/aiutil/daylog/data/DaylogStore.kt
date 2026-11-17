@@ -69,6 +69,29 @@ class DaylogStore(private val file: File) {
         )
     }
 
+    fun updateAiSummary(dateKey: String, summary: String) {
+        val current = getRecord(dateKey) ?: DayRecord(dateKey = dateKey)
+        upsertRecord(
+            current.copy(
+                aiSummary = summary.trim(),
+                updatedAtMs = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    fun updatePhotoAiCaption(dateKey: String, photoUri: String, caption: String) {
+        val current = getRecord(dateKey) ?: return
+        val updatedPhotos = current.photos.map { photo ->
+            if (photo.uri == photoUri) photo.copy(aiCaption = caption.trim()) else photo
+        }
+        upsertRecord(
+            current.copy(
+                photos = updatedPhotos,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+        )
+    }
+
     fun addActivity(dateKey: String, item: ActivityItem) {
         val current = getRecord(dateKey) ?: DayRecord(dateKey = dateKey)
         val merged = (current.activities.filterNot { it.id == item.id } + item)
