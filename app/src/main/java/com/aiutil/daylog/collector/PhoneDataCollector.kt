@@ -641,6 +641,7 @@ class PhoneDataCollector(
                                 type = ActivityType.PAYMENT,
                                 title = parsed.title,
                                 detail = parsed.detail,
+                                fullText = body.trim(),
                                 amountWon = parsed.amountWon,
                             )
                         )
@@ -659,6 +660,7 @@ class PhoneDataCollector(
                                 type = ActivityType.SMS,
                                 title = title,
                                 detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                                fullText = body.trim(),
                             )
                         )
                     }
@@ -736,6 +738,7 @@ class PhoneDataCollector(
                                 type = ActivityType.PAYMENT,
                                 title = parsed.title,
                                 detail = parsed.detail,
+                                fullText = body.trim(),
                                 amountWon = parsed.amountWon,
                             )
                         )
@@ -753,6 +756,7 @@ class PhoneDataCollector(
                                 type = ActivityType.SMS,
                                 title = title,
                                 detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                                fullText = body.trim(),
                             )
                         )
                     }
@@ -942,6 +946,7 @@ class PhoneDataCollector(
                                     type = ActivityType.PAYMENT,
                                     title = parsed.title,
                                     detail = parsed.detail,
+                                    fullText = body.trim(),
                                     amountWon = parsed.amountWon,
                                 )
                             )
@@ -959,6 +964,7 @@ class PhoneDataCollector(
                                     type = ActivityType.SMS,
                                     title = title,
                                     detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                                    fullText = body.trim(),
                                 )
                             )
                         }

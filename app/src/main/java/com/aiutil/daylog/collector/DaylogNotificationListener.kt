@@ -82,6 +82,7 @@ class DaylogNotificationListener : NotificationListenerService() {
                 type = ActivityType.PAYMENT,
                 title = parsed.title,
                 detail = parsed.detail,
+                fullText = body.trim(),
                 amountWon = parsed.amountWon,
             )
             runCatching { App.snsCaptures.appendActivity(item) }
@@ -98,6 +99,7 @@ class DaylogNotificationListener : NotificationListenerService() {
             snsPlatform = platform,
             title = cleanTitle,
             detail = cleanDetail,
+            fullText = body.trim(),
         )
         runCatching { App.snsCaptures.appendActivity(item) }
     }

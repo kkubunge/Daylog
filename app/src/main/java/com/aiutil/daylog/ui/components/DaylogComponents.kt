@@ -38,6 +38,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -54,7 +55,9 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -590,12 +593,17 @@ fun ActivityLogRow(
         ActivityType.NOTE -> Icons.Default.EditNote
     }
     val typeLabel = if (item.type == ActivityType.SNS) item.snsPlatform.displayName else item.type.label
+    val fullBodyText = item.fullText.ifBlank { item.detail }
+    val hasExpandableContent = fullBodyText.isNotBlank() || item.aiCallSummary.isNotBlank()
+    var showFullDialog by remember(item.id) { mutableStateOf(false) }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(10.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (hasExpandableContent) Modifier.clickable { showFullDialog = true } else Modifier),
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
             Row(
@@ -693,6 +701,14 @@ fun ActivityLogRow(
                             modifier = Modifier.size(16.dp),
                         )
                     }
+                } else if (hasExpandableContent && !(item.type == ActivityType.CALL && item.audioUri.isNotBlank() && onSummarizeCall != null)) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "전체 내용 보기",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
 
@@ -715,6 +731,120 @@ fun ActivityLogRow(
             }
         }
     }
+
+    if (showFullDialog) {
+        ActivityFullTextDialog(
+            item = item,
+            icon = icon,
+            typeLabel = typeLabel,
+            onDismiss = { showFullDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun ActivityFullTextDialog(
+    item: ActivityItem,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    typeLabel: String,
+    onDismiss: () -> Unit,
+) {
+    val bodyText = item.fullText.ifBlank { item.detail }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = typeLabel,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = "${DateUtils.formatShortKoreanDate(item.dateKey)} ${DateUtils.formatTimeHm(item.timestampMs)} · $typeLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (item.type == ActivityType.PAYMENT && item.amountWon > 0L) {
+                    Text(
+                        text = SmsSpamFilter.formatWon(item.amountWon),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HorizontalDivider()
+                if (bodyText.isNotBlank()) {
+                    SelectionContainer {
+                        Text(
+                            text = bodyText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+                if (item.aiCallSummary.isNotBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "통화 녹음 AI 요약",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            SelectionContainer {
+                                Text(
+                                    text = item.aiCallSummary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("닫기")
+            }
+        },
+    )
 }
 
 /**

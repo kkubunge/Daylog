@@ -102,7 +102,11 @@ fun FeedScreen(
                         it.displayName.lowercase().contains(q) ||
                         it.aiCaption.lowercase().contains(q)
                 } ||
-                rec.activities.any { it.title.lowercase().contains(q) || it.detail.lowercase().contains(q) }
+                rec.activities.any {
+                    it.title.lowercase().contains(q) ||
+                        it.detail.lowercase().contains(q) ||
+                        it.fullText.lowercase().contains(q)
+                }
         }
     }
 

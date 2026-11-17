@@ -139,6 +139,7 @@ data class ActivityItem(
     val snsPlatform: SnsPlatform = SnsPlatform.OTHER,
     val title: String,
     val detail: String,
+    val fullText: String = "",
     val durationSec: Long = 0L,
     val amountWon: Long = 0L,
     val audioUri: String = "",

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">데이로그</string>
-    <string name="notification_listener_label">데이로그 SNS 활동 기록</string>
+    <string name="app_name">Daylog</string>
+    <string name="notification_listener_label">Daylog 알림·결제 기록</string>
 </resources>
