@@ -394,7 +394,19 @@ fun CalendarScreen(
             }
         }
 
-        // 2.5 메모가 적혀 있으면 활동 내역에서 분리해 맨 위에 별도 표시
+        // 3. 요약 건수 바
+        item(key = "summary_strip") {
+            SummaryMetricStrip(
+                placeCount = places.size,
+                photoCount = photos.size,
+                paymentCount = paymentCount,
+                callCount = callCount,
+                smsCount = smsCount,
+                snsCount = snsCount,
+            )
+        }
+
+        // 3.5 메모 (적혀 있는 메모가 있으면 요약 건수 바 바로 아래에 별도 표시) + 간단 메모 추가 버튼
         if (noteActivities.isNotEmpty() || quickNoteText.isNotBlank()) {
             item(key = "top_memo_header") {
                 Text(
@@ -430,16 +442,17 @@ fun CalendarScreen(
             }
         }
 
-        // 3. 요약 건수 바
-        item(key = "summary_strip") {
-            SummaryMetricStrip(
-                placeCount = places.size,
-                photoCount = photos.size,
-                paymentCount = paymentCount,
-                callCount = callCount,
-                smsCount = smsCount,
-                snsCount = snsCount,
-            )
+        item(key = "quick_note_add_top") {
+            OutlinedButton(
+                onClick = { showAddNoteDialog = true },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("간단 메모 추가", style = MaterialTheme.typography.labelMedium)
+            }
         }
 
         // 4. 섹션 필터 (오늘일 때 현재 위치 기록 빠른 버튼 포함)
@@ -783,19 +796,6 @@ fun CalendarScreen(
                         }
                     }
                 }
-            }
-        }
-
-        item(key = "bottom_quick_note_add") {
-            OutlinedButton(
-                onClick = { showAddNoteDialog = true },
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("간단 메모 추가", style = MaterialTheme.typography.labelMedium)
             }
         }
 

@@ -78,6 +78,7 @@ fun PlacesScreen(
     val context = LocalContext.current
     var showDatePicker by remember { mutableStateOf(false) }
     var focusedPinIdx by remember(selectedDateKey) { mutableStateOf<Int?>(null) }
+    var focusTrigger by remember(selectedDateKey) { mutableStateOf(0) }
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
 
     val selectedRecord = recordsByDate[selectedDateKey]
@@ -244,6 +245,7 @@ fun PlacesScreen(
                         places = dayPlaces,
                         stayThresholdMin = stayThresholdMin,
                         focusIndex = focusedPinIdx,
+                        focusRequestKey = focusTrigger,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(320.dp),
@@ -292,7 +294,10 @@ fun PlacesScreen(
                     visit = visit,
                     isLast = idx == dayPlaces.lastIndex,
                     stayThresholdMin = stayThresholdMin,
-                    onOpenMap = { focusedPinIdx = idx },
+                    onOpenMap = {
+                        focusedPinIdx = idx
+                        focusTrigger++
+                    },
                     onSaveAlias = { v -> aliasTargetVisit = v },
                     onClassifyWithAi = onClassifyPlaceWithAi,
                 )
