@@ -19,7 +19,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -45,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aiutil.daylog.collector.PhoneDataCollector
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.AiSearchResult
@@ -54,6 +57,7 @@ import com.aiutil.daylog.util.DateUtils
 
 private enum class FeedFilter(val label: String) {
     ALL("전체"),
+    NOTE("메모"),
     PLACE("장소"),
     PHOTO("사진"),
     PAYMENT("결제"),
@@ -83,6 +87,7 @@ fun FeedScreen(
             if (!rec.hasAnyData) return@filter false
             val matchType = when (filter) {
                 FeedFilter.ALL -> true
+                FeedFilter.NOTE -> rec.quickNote.isNotBlank() || rec.activities.any { it.type == ActivityType.NOTE }
                 FeedFilter.PLACE -> rec.places.isNotEmpty()
                 FeedFilter.PHOTO -> rec.photos.isNotEmpty()
                 FeedFilter.PAYMENT -> rec.activities.any { it.type == ActivityType.PAYMENT }
@@ -316,9 +321,157 @@ fun FeedScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+
+                        // 일별 요약 (AI 브리핑 우선, 없을 때는 당일 핵심 활동·장소·결제 자동 요약)
+                        val daySummaryText = remember(rec) { buildFeedDaySummary(rec) }
+                        if (daySummaryText.isNotBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(13.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (rec.aiSummary.isNotBlank()) "일별 AI 요약" else "일별 요약",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    Text(
+                                        text = daySummaryText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 4,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+
+                        // 일별 요약 밑에 메모(간단 메모 + 구글 달력 일정) 표시
+                        val noteItems = remember(rec.activities) {
+                            rec.activities.filter { it.type == ActivityType.NOTE }
+                        }
+                        val quickNote = rec.quickNote.trim()
+                        if (quickNote.isNotBlank() || noteItems.isNotEmpty()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(
+                                        text = "메모",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    if (quickNote.isNotBlank()) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.EditNote,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = quickNote,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                    noteItems.take(4).forEach { note ->
+                                        val isGcal = note.id.startsWith(PhoneDataCollector.GCAL_ACTIVITY_PREFIX)
+                                        val cleanTitle = if (isGcal) {
+                                            note.title.removePrefix(PhoneDataCollector.GCAL_TITLE_PREFIX)
+                                        } else {
+                                            note.title
+                                        }
+                                        val lineText = listOf(cleanTitle, note.detail)
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(" · ")
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = if (isGcal) Icons.Default.CalendarMonth else Icons.Default.EditNote,
+                                                contentDescription = if (isGcal) "구글 달력" else "메모",
+                                                tint = if (isGcal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = lineText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
+                                    }
+                                    if (noteItems.size > 4) {
+                                        Text(
+                                            text = "외 메모 ${noteItems.size - 4}건 더 보기",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+private fun buildFeedDaySummary(rec: DayRecord): String {
+    if (rec.aiSummary.isNotBlank()) return rec.aiSummary.trim()
+
+    val nonNote = rec.activities.filter { it.type != ActivityType.NOTE }
+    val parts = buildList {
+        if (rec.places.isNotEmpty()) {
+            val placeNames = rec.places
+                .map { it.nearbyPoi.ifBlank { it.placeName } }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(3)
+            if (placeNames.isNotEmpty()) {
+                add("방문 ${placeNames.joinToString(", ")}")
+            }
+        }
+        val payItems = nonNote.filter { it.type == ActivityType.PAYMENT }
+        if (payItems.isNotEmpty()) {
+            val wonText = if (rec.totalPaymentWon > 0L) SmsSpamFilter.formatWon(rec.totalPaymentWon) else "${payItems.size}건"
+            add("결제 ${payItems.size}건($wonText)")
+        }
+        val callCount = nonNote.count { it.type == ActivityType.CALL }
+        if (callCount > 0) add("통화 ${callCount}건")
+        val smsCount = nonNote.count { it.type == ActivityType.SMS }
+        if (smsCount > 0) add("문자 ${smsCount}건")
+        val snsCount = nonNote.count { it.type == ActivityType.SNS }
+        if (snsCount > 0) add("SNS ${snsCount}건")
+        if (rec.photos.isNotEmpty()) add("사진 ${rec.photos.size}장")
+    }
+    return parts.joinToString(" · ")
 }
