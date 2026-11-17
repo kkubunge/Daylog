@@ -184,10 +184,13 @@ fun AppRoot(
                     )
                 }
 
-                // Gemini API 키가 있고 상호명이 비어 있는 장소가 있으면 자동으로 검색·추정해 채움
+                // Gemini API 키가 있으면 미분류 장소 상호 및 미요약 통화 녹음을 백그라운드로 자동 보강
                 if (hasGeminiKey) {
                     val missingPoiVisits = updated.places.filter { it.nearbyPoi.isBlank() }.take(4)
-                    if (missingPoiVisits.isNotEmpty()) {
+                    val hasPendingCalls = updated.activities.any {
+                        it.type == ActivityType.CALL && it.audioUri.isNotBlank() && it.aiCallSummary.isBlank()
+                    }
+                    if (missingPoiVisits.isNotEmpty() || hasPendingCalls) {
                         scope.launch {
                             for (visit in missingPoiVisits) {
                                 val res = App.gemini.inferPlaceCategoryAndPoi(
@@ -197,6 +200,16 @@ fun AppRoot(
                                 )
                                 if (res != null && (res.second.isNotBlank() || res.first != visit.category)) {
                                     App.daylogs.updatePlaceClassification(dateKey, visit.id, res.first, res.second)
+                                }
+                            }
+                            if (hasPendingCalls) {
+                                App.gemini.summarizePendingCalls(
+                                    context = context,
+                                    records = listOf(updated),
+                                    apiKey = settings.geminiApiKey,
+                                    maxCalls = 8,
+                                ) { dKey, actId, summary ->
+                                    App.daylogs.updateCallAiSummary(dKey, actId, summary)
                                 }
                             }
                         }
@@ -251,6 +264,22 @@ fun AppRoot(
                 snackbarHostState.showSnackbar(
                     "$fromLabel ~ $toLabel (${keys.size}일 중 ${nonEmpty.size}일 수집 · 결제 ${paymentCount}건)"
                 )
+
+                if (hasGeminiKey && nonEmpty.isNotEmpty()) {
+                    scope.launch {
+                        val callCountDone = App.gemini.summarizePendingCalls(
+                            context = context,
+                            records = nonEmpty,
+                            apiKey = settings.geminiApiKey,
+                            maxCalls = 25,
+                        ) { dKey, actId, summary ->
+                            App.daylogs.updateCallAiSummary(dKey, actId, summary)
+                        }
+                        if (callCountDone > 0) {
+                            snackbarHostState.showSnackbar("과거 통화 녹음 ${callCountDone}건 AI 요약을 완료했습니다.")
+                        }
+                    }
+                }
             } finally {
                 isScanning = false
             }

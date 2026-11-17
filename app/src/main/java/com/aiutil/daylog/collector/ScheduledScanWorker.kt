@@ -75,6 +75,8 @@ class ScheduledScanWorker(
         var dataDays = 0
         var failedDays = 0
         var totalPayments = 0
+        var summarizedCalls = 0
+        var remainingCallBudget = 25
 
         // 중단 시에도 부분 성과가 남도록 10일 단위 청크로 수집·저장
         val subChunks = window.dateKeys.chunked(10)
@@ -84,20 +86,34 @@ class ScheduledScanWorker(
                 val existingMap = App.daylogs.records.value.associateBy { it.dateKey }
                 collector.collectBatch(chunkKeys, existingMap, settings)
             }
-            attempt.onSuccess { scanned ->
-                val nonEmpty = scanned.filter { it.hasAnyData }
+            val collected = attempt.getOrNull()
+            if (collected != null) {
+                val nonEmpty = collected.filter { it.hasAnyData }
                 if (nonEmpty.isNotEmpty()) {
                     App.daylogs.upsertAll(nonEmpty)
+                    if (settings.geminiApiKey.isNotBlank() && remainingCallBudget > 0) {
+                        val done = App.gemini.summarizePendingCalls(
+                            context = applicationContext,
+                            records = nonEmpty,
+                            apiKey = settings.geminiApiKey,
+                            maxCalls = remainingCallBudget,
+                        ) { dKey, actId, summary ->
+                            App.daylogs.updateCallAiSummary(dKey, actId, summary)
+                        }
+                        summarizedCalls += done
+                        remainingCallBudget -= done
+                    }
                 }
-                val logs = scanned.map { rec ->
+                val logs = collected.map { rec ->
                     ScheduledScanPlanner.toDateScanLog(rec, chunkTime, isScheduled = true)
                 }
                 App.scanHistory.recordScanResults(logs)
-                successDays += scanned.size
+                successDays += collected.size
                 dataDays += nonEmpty.size
                 totalPayments += logs.sumOf { it.paymentCount }
-            }.onFailure { err ->
-                val reason = err.message?.take(60).orEmpty().ifBlank { "수집 오류" }
+            } else {
+                val err = attempt.exceptionOrNull()
+                val reason = err?.message?.take(60).orEmpty().ifBlank { "수집 오류" }
                 val failedLogs = chunkKeys.map { key ->
                     DateScanLog(
                         dateKey = key,
@@ -118,10 +134,11 @@ class ScheduledScanWorker(
             }
         }
 
+        val callPart = if (summarizedCalls > 0) " · 통화요약 ${summarizedCalls}건" else ""
         val summaryMsg = if (failedDays == 0) {
-            "${window.startDateKey} ~ ${window.endDateKey} · ${successDays}일 완료 (${dataDays}일 데이터 · 결제 ${totalPayments}건)"
+            "${window.startDateKey} ~ ${window.endDateKey} · ${successDays}일 완료 (${dataDays}일 데이터 · 결제 ${totalPayments}건$callPart)"
         } else {
-            "${window.startDateKey} ~ ${window.endDateKey} · 성공 ${successDays}일 / 실패 ${failedDays}일"
+            "${window.startDateKey} ~ ${window.endDateKey} · 성공 ${successDays}일 / 실패 ${failedDays}일$callPart"
         }
 
         App.scanHistory.recordScheduledRun(

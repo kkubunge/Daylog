@@ -293,6 +293,46 @@ class GeminiClient {
         callGeminiGenerateContent(bodyJson, cleanKey)?.trim()?.take(320)?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * 매칭된 통화 녹음이 있으나 아직 AI 요약이 없는 통화들을 순차적으로 요약한다.
+     * @return 새로 요약이 생성된 건수
+     */
+    suspend fun summarizePendingCalls(
+        context: Context,
+        records: List<DayRecord>,
+        apiKey: String,
+        maxCalls: Int = 20,
+        onSummarized: suspend (dateKey: String, activityId: String, summary: String) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isEmpty() || maxCalls <= 0) return@withContext 0
+
+        val pending = records
+            .sortedByDescending { it.dateKey }
+            .flatMap { rec ->
+                rec.activities
+                    .filter { it.type == ActivityType.CALL && it.audioUri.isNotBlank() && it.aiCallSummary.isBlank() }
+                    .sortedByDescending { it.timestampMs }
+                    .map { rec.dateKey to it }
+            }
+            .take(maxCalls)
+
+        var done = 0
+        for ((dateKey, call) in pending) {
+            val summary = summarizeCallRecording(
+                context = context,
+                audioUri = call.audioUri,
+                callerTitle = call.title,
+                apiKey = cleanKey,
+            )
+            if (!summary.isNullOrBlank()) {
+                onSummarized(dateKey, call.id, summary)
+                done++
+            }
+        }
+        done
+    }
+
     private fun buildTextRequestBody(
         prompt: String,
         temperature: Double,
