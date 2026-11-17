@@ -488,7 +488,10 @@ fun AppRoot(
         snackbarHostState.showSnackbar("공유한 데이터를 오늘 날짜에 추가했습니다.")
     }
 
-    Scaffold(
+    val curLightbox = lightboxState
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
@@ -703,9 +706,9 @@ fun AppRoot(
         }
     }
 
-    val sheetDate = detailSheetDateKey
-    if (sheetDate != null) {
-        DayDetailSheet(
+        val sheetDate = detailSheetDateKey
+        if (sheetDate != null && curLightbox == null) {
+            DayDetailSheet(
             dateKey = sheetDate,
             record = recordsByDate[sheetDate],
             isScanning = isScanning,
@@ -748,8 +751,8 @@ fun AppRoot(
         )
     }
 
-    if (showSettings) {
-        SettingsSheet(
+        if (showSettings && curLightbox == null) {
+            SettingsSheet(
             todayKey = todayKey,
             settings = settings,
             permissionStatus = permissionStatus,
@@ -788,18 +791,16 @@ fun AppRoot(
         )
     }
 
-    val curLightbox = lightboxState
-    if (curLightbox != null) {
-        val rootSafePadding = WindowInsets.safeDrawing.asPaddingValues()
-        PhotoLightboxDialog(
-            photos = curLightbox.photos,
-            initialIndex = curLightbox.initialIndex,
-            hasGeminiKey = hasGeminiKey,
-            isAnalyzing = isAiBusy,
-            safePadding = rootSafePadding,
-            onAnalyzePhoto = { targetPhoto -> analyzeTargetPhoto(curLightbox.dateKey, targetPhoto) },
-            onDismiss = { lightboxState = null },
-        )
+        if (curLightbox != null) {
+            PhotoLightboxDialog(
+                photos = curLightbox.photos,
+                initialIndex = curLightbox.initialIndex,
+                hasGeminiKey = hasGeminiKey,
+                isAnalyzing = isAiBusy,
+                onAnalyzePhoto = { targetPhoto -> analyzeTargetPhoto(curLightbox.dateKey, targetPhoto) },
+                onDismiss = { lightboxState = null },
+            )
+        }
     }
 }
 
