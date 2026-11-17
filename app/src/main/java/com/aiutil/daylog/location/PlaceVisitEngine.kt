@@ -326,7 +326,7 @@ object PlaceVisitEngine {
             )
 
             val suppressed = visit.nearbyPoi.isNotBlank() && classified.nearbyPoi.isBlank()
-            val resolvedName = if (suppressed && visit.placeName == visit.nearbyPoi) {
+            val resolvedName = if (suppressed && (visit.placeName == visit.nearbyPoi || visit.placeName.contains(visit.nearbyPoi))) {
                 cleanAddressFallback(visit.address, visit.cityName, visit.placeName)
             } else {
                 visit.placeName

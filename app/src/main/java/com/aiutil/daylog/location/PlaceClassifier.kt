@@ -138,14 +138,18 @@ object PlaceClassifier {
             }
         }
 
-        // 3. 장소명, 추정 상호, 주소 키워드 매칭
+        // 3. 장소명, 추정 상호, 주소 키워드 매칭 (단, 심야/장기 체류 시 결제 없는 상가·카페·식당 오탐 제외)
         val poiCat = classifyByText(resolvedPoi)
         if (isNightOrLongStay && poiCat in setOf(PlaceCategory.SHOPPING, PlaceCategory.CAFE, PlaceCategory.RESTAURANT)) {
             resolvedPoi = ""
         }
         val textCat = classifyByText("$placeName $resolvedPoi $address")
         if (textCat != PlaceCategory.GENERAL) {
-            return ClassificationResult(category = textCat, nearbyPoi = resolvedPoi)
+            if (isNightOrLongStay && textCat in setOf(PlaceCategory.SHOPPING, PlaceCategory.CAFE, PlaceCategory.RESTAURANT)) {
+                resolvedPoi = ""
+            } else {
+                return ClassificationResult(category = textCat, nearbyPoi = resolvedPoi)
+            }
         }
 
         // 4. 장시간 체류 시간대 휴리스틱 (평일 낮 3시간 이상 -> 업무, 심야 장시간 -> 집 가능성)
