@@ -335,7 +335,8 @@ fun PlacesScreen(
     val targetVisit = aliasTargetVisit
     if (targetVisit != null) {
         SavePlaceAliasDialog(
-            visit = targetVisit,
+            initialName = targetVisit.placeName,
+            address = targetVisit.address,
             onDismiss = { aliasTargetVisit = null },
             onSave = { name ->
                 onSaveAlias(name, targetVisit)
