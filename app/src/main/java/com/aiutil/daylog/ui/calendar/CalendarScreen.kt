@@ -158,7 +158,23 @@ fun CalendarScreen(
     val latestSelectedDate by rememberUpdatedState(selectedDateKey)
     val latestTodayKey by rememberUpdatedState(todayKey)
     val latestOnSelectDate by rememberUpdatedState(onSelectDate)
+    val latestYear by rememberUpdatedState(year)
+    val latestMonth by rememberUpdatedState(month)
     val swipeThresholdPx = with(density) { 68.dp.toPx() }
+
+    fun adjacentYearMonth(baseYear: Int, baseMonth: Int, delta: Int): Pair<Int, Int> {
+        return if (delta < 0) {
+            if (baseMonth == 1) (baseYear - 1) to 12 else baseYear to (baseMonth - 1)
+        } else {
+            if (baseMonth == 12) (baseYear + 1) to 1 else baseYear to (baseMonth + 1)
+        }
+    }
+
+    fun shiftMonth(delta: Int) {
+        val (nextY, nextM) = adjacentYearMonth(latestYear, latestMonth, delta)
+        year = nextY
+        month = nextM
+    }
 
     val (leadingEmpty, dayKeys) = remember(year, month) {
         DateUtils.monthGridDays(year, month)
@@ -300,6 +316,52 @@ fun CalendarScreen(
                     .fillMaxWidth()
                     .onGloballyPositioned { coords ->
                         calendarBounds = if (coords.isAttached) coords.boundsInRoot() else null
+                    }
+                    .pointerInput(swipeThresholdPx) {
+                        val touchSlop = viewConfiguration.touchSlop
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var totalDx = 0f
+                            var totalDy = 0f
+                            var lockedHorizontal = false
+
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+
+                                val delta = change.position - change.previousPosition
+                                totalDx += delta.x
+                                totalDy += delta.y
+
+                                if (!lockedHorizontal) {
+                                    if (abs(totalDy) > touchSlop && abs(totalDy) >= abs(totalDx)) {
+                                        break
+                                    } else if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * 1.4f) {
+                                        lockedHorizontal = true
+                                    }
+                                }
+
+                                if (lockedHorizontal) {
+                                    change.consume()
+                                    val (pY, pM) = adjacentYearMonth(
+                                        latestYear,
+                                        latestMonth,
+                                        if (totalDx > 0f) -1 else 1,
+                                    )
+                                    swipeHintLabel = if (totalDx > 0f) {
+                                        "◀ ${pY}년 ${pM}월"
+                                    } else {
+                                        "${pY}년 ${pM}월 ▶"
+                                    }
+                                }
+                            }
+
+                            swipeHintLabel = null
+                            if (lockedHorizontal && abs(totalDx) >= swipeThresholdPx) {
+                                shiftMonth(if (totalDx > 0f) -1 else 1)
+                            }
+                        }
                     },
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
@@ -307,14 +369,7 @@ fun CalendarScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        IconButton(onClick = {
-                            if (month == 1) {
-                                year -= 1
-                                month = 12
-                            } else {
-                                month -= 1
-                            }
-                        }) {
+                        IconButton(onClick = { shiftMonth(-1) }) {
                             Icon(Icons.Default.ChevronLeft, contentDescription = "이전 달")
                         }
 
@@ -335,14 +390,7 @@ fun CalendarScreen(
                             Text("오늘", style = MaterialTheme.typography.labelMedium)
                         }
 
-                        IconButton(onClick = {
-                            if (month == 12) {
-                                year += 1
-                                month = 1
-                            } else {
-                                month += 1
-                            }
-                        }) {
+                        IconButton(onClick = { shiftMonth(1) }) {
                             Icon(Icons.Default.ChevronRight, contentDescription = "다음 달")
                         }
                     }
