@@ -45,6 +45,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -92,6 +93,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.aiutil.daylog.collector.PhoneDataCollector
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
@@ -527,16 +529,32 @@ fun ActivityLogRow(
     onSummarizeCall: ((ActivityItem) -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
-    val icon = when (item.type) {
-        ActivityType.PLACE -> Icons.Default.LocationOn
-        ActivityType.PHOTO -> Icons.Default.PhotoCamera
-        ActivityType.PAYMENT -> Icons.Default.ReceiptLong
-        ActivityType.CALL -> Icons.Default.Call
-        ActivityType.SMS -> Icons.Default.Sms
-        ActivityType.SNS -> Icons.Default.Forum
-        ActivityType.NOTE -> Icons.Default.EditNote
+    val isGoogleCalendar = item.id.startsWith(PhoneDataCollector.GCAL_ACTIVITY_PREFIX)
+    val icon = when {
+        isGoogleCalendar -> Icons.Default.CalendarMonth
+        item.type == ActivityType.PLACE -> Icons.Default.LocationOn
+        item.type == ActivityType.PHOTO -> Icons.Default.PhotoCamera
+        item.type == ActivityType.PAYMENT -> Icons.Default.ReceiptLong
+        item.type == ActivityType.CALL -> Icons.Default.Call
+        item.type == ActivityType.SMS -> Icons.Default.Sms
+        item.type == ActivityType.SNS -> Icons.Default.Forum
+        else -> Icons.Default.EditNote
     }
-    val typeLabel = if (item.type == ActivityType.SNS) item.snsPlatform.displayName else item.type.label
+    val typeLabel = when {
+        isGoogleCalendar -> "구글 달력"
+        item.type == ActivityType.SNS -> item.snsPlatform.displayName
+        else -> item.type.label
+    }
+    val displayTitle = if (isGoogleCalendar) {
+        item.title.removePrefix(PhoneDataCollector.GCAL_TITLE_PREFIX)
+    } else {
+        item.title
+    }
+    val timeText = if (isGoogleCalendar && item.detail.startsWith("종일")) {
+        "종일"
+    } else {
+        DateUtils.formatTimeHm(item.timestampMs)
+    }
     val fullBodyText = item.fullText.ifBlank { item.detail }
     val hasExpandableContent = fullBodyText.isNotBlank() || item.aiCallSummary.isNotBlank()
     var showFullDialog by remember(item.id) { mutableStateOf(false) }
@@ -555,7 +573,7 @@ fun ActivityLogRow(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = DateUtils.formatTimeHm(item.timestampMs),
+                    text = timeText,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(46.dp),
@@ -584,7 +602,7 @@ fun ActivityLogRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = item.title,
+                            text = displayTitle,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,

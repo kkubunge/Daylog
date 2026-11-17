@@ -488,10 +488,29 @@ fun AppRoot(
         }
     }
 
+    fun syncCalendarMonth(year: Int, month: Int) {
+        if (!permissionStatus.calendarGranted || !settings.collectCalendar) return
+        scope.launch {
+            val currentMap = App.daylogs.records.value.associateBy { it.dateKey }
+            val updated = App.collector.collectCalendarMonth(year, month, currentMap, settings)
+            if (updated.isNotEmpty()) {
+                App.daylogs.upsertAll(updated)
+            }
+        }
+    }
+
     // 앱 진입 또는 권한 획득 시 오늘 날짜 자동 조회
     LaunchedEffect(permissionStatus.anyDataGranted, todayKey) {
         if (permissionStatus.anyDataGranted && todayKey !in autoScannedDates) {
             scanDate(todayKey, showToast = false)
+        }
+    }
+
+    // 달력 권한·설정 활성화 시 현재 선택한 달의 구글 달력 일정 자동 동기화
+    LaunchedEffect(permissionStatus.calendarGranted, settings.collectCalendar) {
+        if (permissionStatus.calendarGranted && settings.collectCalendar) {
+            val (ymY, ymM) = DateUtils.yearMonthOf(selectedDateKey)
+            syncCalendarMonth(ymY, ymM)
         }
     }
 
@@ -722,6 +741,7 @@ fun AppRoot(
                     onSummarizeCall = { item -> summarizeCallRecording(item) },
                     onPhotoClick = { photos, idx -> lightboxState = LightboxState(selectedDateKey, photos, idx) },
                     onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
+                    onMonthChanged = { y, m -> syncCalendarMonth(y, m) },
                     onOpenPermissions = { showSettings = true },
                 )
 

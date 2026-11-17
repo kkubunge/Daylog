@@ -208,7 +208,11 @@ fun DayDetailSheet(
                         item = noteItem,
                         isAiBusy = isAiBusy,
                         onSummarizeCall = null,
-                        onDelete = { onDeleteActivity(noteItem.id) },
+                        onDelete = if (noteItem.id.startsWith(com.aiutil.daylog.collector.PhoneDataCollector.GCAL_ACTIVITY_PREFIX)) {
+                            null
+                        } else {
+                            { onDeleteActivity(noteItem.id) }
+                        },
                     )
                 }
             }

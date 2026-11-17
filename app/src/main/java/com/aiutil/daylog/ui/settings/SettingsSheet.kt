@@ -91,7 +91,7 @@ private enum class SettingsSubPage(
     PERMISSIONS(
         group = SettingsGroup.ACCESS,
         title = "권한 설정",
-        description = "사진 · 통화 · 문자 · 위치 · SNS 알림 접근 허용",
+        description = "사진 · 통화 · 문자 · 달력 · 위치 · SNS 알림 접근 허용",
     ),
     GPS_TRACKING(
         group = SettingsGroup.AUTO_RECORD,
@@ -106,7 +106,7 @@ private enum class SettingsSubPage(
     COLLECTION_ITEMS(
         group = SettingsGroup.DATA_AND_PLACES,
         title = "수집 항목 설정",
-        description = "사진 · 결제 · 통화 · 녹음 · 문자 · 스팸 필터 · SNS",
+        description = "사진 · 결제 · 통화 · 문자 · 구글 달력 · SNS",
     ),
     BATCH_AND_HISTORY(
         group = SettingsGroup.DATA_AND_PLACES,
@@ -570,11 +570,12 @@ private fun buildSubPageSummary(
                 permissionStatus.mediaLocationGranted,
                 permissionStatus.callLogGranted && permissionStatus.contactsGranted,
                 permissionStatus.smsGranted,
+                permissionStatus.calendarGranted,
                 permissionStatus.locationGranted,
                 permissionStatus.backgroundLocationGranted,
                 permissionStatus.snsNotificationEnabled,
             ).count { it }
-            "허용 ${grantedCount}/8"
+            "허용 ${grantedCount}/9"
         }
 
         SettingsSubPage.GPS_TRACKING -> {
@@ -596,9 +597,10 @@ private fun buildSubPageSummary(
                 settings.collectPayments,
                 settings.collectCalls,
                 settings.collectSms,
+                settings.collectCalendar,
                 settings.collectSns,
             ).count { it }
-            "${enabledCount}/5 항목 켜짐"
+            "${enabledCount}/6 항목 켜짐"
         }
 
         SettingsSubPage.BATCH_AND_HISTORY -> {
@@ -716,6 +718,7 @@ private fun PermissionsSubPage(
             PermissionStatusRow("사진 내 GPS 위치 읽기", permissionStatus.mediaLocationGranted)
             PermissionStatusRow("통화 기록 & 연락처", permissionStatus.callLogGranted && permissionStatus.contactsGranted)
             PermissionStatusRow("문자 메시지", permissionStatus.smsGranted)
+            PermissionStatusRow("구글 달력 일정", permissionStatus.calendarGranted)
             PermissionStatusRow("위치 (GPS 이동·체류)", permissionStatus.locationGranted)
             PermissionStatusRow("백그라운드 위치 (항상 허용)", permissionStatus.backgroundLocationGranted)
             PermissionStatusRow("SNS 알림 수신", permissionStatus.snsNotificationEnabled)
@@ -905,6 +908,11 @@ private fun CollectionItemsSubPage(
                 title = "SNS 알림 수집",
                 checked = settings.collectSns,
                 onCheckedChange = { v -> onUpdateSettings { it.copy(collectSns = v) } },
+            )
+            SettingSwitchRow(
+                title = "구글 달력 일정 연동 (달력 · 메모 표시)",
+                checked = settings.collectCalendar,
+                onCheckedChange = { v -> onUpdateSettings { it.copy(collectCalendar = v) } },
             )
         }
     }

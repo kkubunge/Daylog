@@ -221,6 +221,7 @@ data class DaylogSettings(
     val collectSms: Boolean = true,
     val filterSpamSms: Boolean = true,
     val collectSns: Boolean = true,
+    val collectCalendar: Boolean = true,
     val trackLocation: Boolean = true,
     val extractPhotoGps: Boolean = true,
     val locationIntervalMin: Int = 3,
@@ -287,11 +288,12 @@ data class PermissionStatus(
     val callLogGranted: Boolean = false,
     val contactsGranted: Boolean = false,
     val smsGranted: Boolean = false,
+    val calendarGranted: Boolean = false,
     val locationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
     val notificationPostGranted: Boolean = true,
     val snsNotificationEnabled: Boolean = false,
 ) {
     val anyDataGranted: Boolean
-        get() = photosGranted || callLogGranted || smsGranted || locationGranted
+        get() = photosGranted || callLogGranted || smsGranted || calendarGranted || locationGranted
 }

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.CalendarContract
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.MediaStore
@@ -66,6 +67,9 @@ class PhoneDataCollector(
 
     fun hasSmsPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+
+    fun hasCalendarPermission(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
 
     fun hasAudioPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -187,6 +191,13 @@ class PhoneDataCollector(
             emptyMap()
         }
 
+        val shouldSyncCalendar = settings.collectCalendar && hasCalendarPermission()
+        val calendarMap = if (shouldSyncCalendar) {
+            queryGoogleCalendarEvents(startMs, endMs, targetSet)
+        } else {
+            emptyMap()
+        }
+
         val gpsMap = locationVisitStore.visitsByDateRange(targetSet)
 
         dateKeys.map { key ->
@@ -200,9 +211,12 @@ class PhoneDataCollector(
             val prevCallSummaries = current?.activities.orEmpty()
                 .filter { it.aiCallSummary.isNotBlank() }
                 .associate { it.id to it.aiCallSummary }
-            val manualNotes = current?.activities.orEmpty().filter { it.type == ActivityType.NOTE }
+            val manualNotes = current?.activities.orEmpty().filter { act ->
+                act.type == ActivityType.NOTE && (!shouldSyncCalendar || !act.id.startsWith("gcal_"))
+            }
             val rawMergedActivities = (
                 manualNotes +
+                    calendarMap[key].orEmpty() +
                     callsMap[key].orEmpty() +
                     smsMap[key].orEmpty() +
                     mmsMap[key].orEmpty() +
@@ -1071,6 +1085,203 @@ class PhoneDataCollector(
         return result
     }
 
+    /**
+     * 달력 화면에서 현재 보고 있는 연·월의 구글 달력 일정을 빠르게 조회해
+     * 일자별 DayRecord의 메모(`gcal_...`)로 병합한다.
+     */
+    suspend fun collectCalendarMonth(
+        year: Int,
+        month: Int,
+        existingMap: Map<String, DayRecord>,
+        settings: DaylogSettings,
+    ): List<DayRecord> = withContext(Dispatchers.IO) {
+        if (!settings.collectCalendar || !hasCalendarPermission()) return@withContext emptyList()
+        val (_, dayKeys) = DateUtils.monthGridDays(year, month)
+        if (dayKeys.isEmpty()) return@withContext emptyList()
+
+        val startMs = DateUtils.dayRangeMs(dayKeys.first()).first
+        val endMs = DateUtils.dayRangeMs(dayKeys.last()).second
+        val calendarMap = queryGoogleCalendarEvents(startMs, endMs, dayKeys.toSet())
+
+        val updatedRecords = mutableListOf<DayRecord>()
+        for (key in dayKeys) {
+            val existing = existingMap[key]
+            val incoming = calendarMap[key].orEmpty()
+            val prevGcal = existing?.activities.orEmpty().filter { it.id.startsWith(GCAL_ACTIVITY_PREFIX) }
+            if (prevGcal == incoming) continue
+            if (existing == null && incoming.isEmpty()) continue
+
+            val nonGcal = existing?.activities.orEmpty().filterNot { it.id.startsWith(GCAL_ACTIVITY_PREFIX) }
+            val merged = (nonGcal + incoming).sortedBy { it.timestampMs }
+            val base = existing ?: DayRecord(dateKey = key)
+            updatedRecords.add(
+                base.copy(
+                    activities = merged,
+                    updatedAtMs = System.currentTimeMillis(),
+                )
+            )
+        }
+        updatedRecords
+    }
+
+    private fun queryGoogleCalendarEvents(
+        startMs: Long,
+        endMs: Long,
+        targetKeys: Set<String>,
+    ): Map<String, List<ActivityItem>> {
+        val result = mutableMapOf<String, MutableList<ActivityItem>>()
+        val allowedCalendarIds = queryAllowedCalendarIds()
+        if (allowedCalendarIds != null && allowedCalendarIds.isEmpty()) return result
+
+        val queryStart = startMs - 86_400_000L
+        val queryEnd = endMs + 86_400_000L
+        val builder = CalendarContract.Instances.CONTENT_URI.buildUpon()
+        ContentUris.appendId(builder, queryStart)
+        ContentUris.appendId(builder, queryEnd)
+
+        val projection = arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.DESCRIPTION,
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.END,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Instances.CALENDAR_ID,
+            CalendarContract.Instances.STATUS,
+        )
+
+        val seenKeys = mutableSetOf<String>()
+
+        runCatching {
+            context.contentResolver.query(
+                builder.build(),
+                projection,
+                null,
+                null,
+                "${CalendarContract.Instances.BEGIN} ASC",
+            )?.use { cursor ->
+                val eventIdIdx = cursor.getColumnIndex(CalendarContract.Instances.EVENT_ID)
+                val titleIdx = cursor.getColumnIndex(CalendarContract.Instances.TITLE)
+                val descIdx = cursor.getColumnIndex(CalendarContract.Instances.DESCRIPTION)
+                val locIdx = cursor.getColumnIndex(CalendarContract.Instances.EVENT_LOCATION)
+                val beginIdx = cursor.getColumnIndex(CalendarContract.Instances.BEGIN)
+                val endIdx = cursor.getColumnIndex(CalendarContract.Instances.END)
+                val allDayIdx = cursor.getColumnIndex(CalendarContract.Instances.ALL_DAY)
+                val calNameIdx = cursor.getColumnIndex(CalendarContract.Instances.CALENDAR_DISPLAY_NAME)
+                val calIdIdx = cursor.getColumnIndex(CalendarContract.Instances.CALENDAR_ID)
+                val statusIdx = cursor.getColumnIndex(CalendarContract.Instances.STATUS)
+
+                while (cursor.moveToNext()) {
+                    val calId = if (calIdIdx >= 0) cursor.getLong(calIdIdx) else -1L
+                    if (allowedCalendarIds != null && calId !in allowedCalendarIds) continue
+
+                    val status = if (statusIdx >= 0) cursor.getInt(statusIdx) else CalendarContract.Events.STATUS_CONFIRMED
+                    if (status == CalendarContract.Events.STATUS_CANCELED) continue
+
+                    val eventId = if (eventIdIdx >= 0) cursor.getLong(eventIdIdx) else 0L
+                    val rawTitle = if (titleIdx >= 0) cursor.getString(titleIdx).orEmpty().trim() else ""
+                    if (rawTitle.isBlank()) continue
+
+                    val beginMs = if (beginIdx >= 0) cursor.getLong(beginIdx) else 0L
+                    val rawEndMs = if (endIdx >= 0) cursor.getLong(endIdx) else beginMs
+                    if (beginMs <= 0L) continue
+
+                    val allDay = (if (allDayIdx >= 0) cursor.getInt(allDayIdx) else 0) == 1
+                    val description = if (descIdx >= 0) cursor.getString(descIdx).orEmpty().trim() else ""
+                    val location = if (locIdx >= 0) cursor.getString(locIdx).orEmpty().trim() else ""
+                    val calName = if (calNameIdx >= 0) cursor.getString(calNameIdx).orEmpty().trim() else ""
+
+                    val dayKeysForEvent = expandCalendarEventDays(beginMs, rawEndMs, allDay, targetKeys)
+                    for (dKey in dayKeysForEvent) {
+                        val dedupKey = "${eventId}_${dKey}"
+                        if (!seenKeys.add(dedupKey)) continue
+
+                        val timeLabel = if (allDay) {
+                            "종일"
+                        } else {
+                            val startHm = DateUtils.formatTimeHm(beginMs)
+                            val endHm = if (rawEndMs > beginMs) DateUtils.formatTimeHm(rawEndMs) else ""
+                            if (endHm.isNotBlank() && endHm != startHm) "$startHm ~ $endHm" else startHm
+                        }
+                        val itemTs = if (allDay) {
+                            DateUtils.dayRangeMs(dKey).first + 9 * 3600_000L
+                        } else {
+                            beginMs
+                        }
+
+                        val cleanDesc = description.replace(Regex("\\s+"), " ").trim()
+                        val detailParts = buildList {
+                            add(timeLabel)
+                            if (calName.isNotBlank()) add(calName)
+                            if (location.isNotBlank()) add(location)
+                            if (cleanDesc.isNotBlank()) add(cleanDesc.take(48))
+                        }
+                        val fullText = buildString {
+                            appendLine(rawTitle)
+                            appendLine("일정: ${DateUtils.formatKoreanDate(dKey)} · $timeLabel")
+                            if (calName.isNotBlank()) appendLine("달력: $calName")
+                            if (location.isNotBlank()) appendLine("장소: $location")
+                            if (description.isNotBlank()) {
+                                appendLine()
+                                append(description)
+                            }
+                        }.trim()
+
+                        result.getOrPut(dKey) { mutableListOf() }.add(
+                            ActivityItem(
+                                id = "${GCAL_ACTIVITY_PREFIX}${eventId}_$dKey",
+                                dateKey = dKey,
+                                timestampMs = itemTs,
+                                type = ActivityType.NOTE,
+                                title = "$GCAL_TITLE_PREFIX$rawTitle",
+                                detail = detailParts.joinToString(" · "),
+                                fullText = fullText,
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    private fun queryAllowedCalendarIds(): Set<Long>? {
+        return runCatching {
+            val googleIds = mutableSetOf<Long>()
+            val visibleIds = mutableSetOf<Long>()
+            val projection = arrayOf(
+                CalendarContract.Calendars._ID,
+                CalendarContract.Calendars.ACCOUNT_TYPE,
+                CalendarContract.Calendars.VISIBLE,
+            )
+            context.contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                projection,
+                null,
+                null,
+                null,
+            )?.use { c ->
+                val idIdx = c.getColumnIndex(CalendarContract.Calendars._ID)
+                val typeIdx = c.getColumnIndex(CalendarContract.Calendars.ACCOUNT_TYPE)
+                val visIdx = c.getColumnIndex(CalendarContract.Calendars.VISIBLE)
+                while (c.moveToNext()) {
+                    val id = if (idIdx >= 0) c.getLong(idIdx) else continue
+                    val accType = if (typeIdx >= 0) c.getString(typeIdx).orEmpty() else ""
+                    val visible = if (visIdx >= 0) c.getInt(visIdx) == 1 else true
+                    if (!visible) continue
+                    visibleIds.add(id)
+                    if (accType == "com.google") {
+                        googleIds.add(id)
+                    }
+                }
+            }
+            // Google 계정 캘린더가 하나라도 있으면 구글 달력만 우선 조회, 없으면 표시된 기기 캘린더 폴백
+            if (googleIds.isNotEmpty()) googleIds else visibleIds
+        }.getOrNull()
+    }
+
     private fun resolvePersonName(
         cachedName: String,
         rawNumber: String,
@@ -1108,6 +1319,41 @@ class PhoneDataCollector(
 
     companion object {
         private const val MAX_EXIF_READ_PER_SCAN = 120
+        const val GCAL_ACTIVITY_PREFIX = "gcal_"
+        const val GCAL_TITLE_PREFIX = "[구글 달력] "
+
+        internal fun expandCalendarEventDays(
+            beginMs: Long,
+            rawEndMs: Long,
+            allDay: Boolean,
+            targetKeys: Set<String>,
+        ): List<String> {
+            val result = mutableListOf<String>()
+            if (allDay) {
+                val startKey = DateUtils.utcMillisToDateKey(beginMs)
+                val inclusiveEndMs = (rawEndMs - 1L).coerceAtLeast(beginMs)
+                val endKey = DateUtils.utcMillisToDateKey(inclusiveEndMs)
+                var cursor = startKey
+                var guard = 0
+                while (cursor <= endKey && guard < 31) {
+                    if (cursor in targetKeys) result.add(cursor)
+                    cursor = DateUtils.daysAgoKey(cursor, -1)
+                    guard++
+                }
+            } else {
+                val startKey = DateUtils.dateKeyFromMs(beginMs)
+                val inclusiveEndMs = if (rawEndMs > beginMs) rawEndMs - 1L else beginMs
+                val endKey = DateUtils.dateKeyFromMs(inclusiveEndMs)
+                var cursor = startKey
+                var guard = 0
+                while (cursor <= endKey && guard < 31) {
+                    if (cursor in targetKeys) result.add(cursor)
+                    cursor = DateUtils.daysAgoKey(cursor, -1)
+                    guard++
+                }
+            }
+            return result
+        }
 
         internal fun isScreenshotFile(folderName: String, displayName: String): Boolean {
             val f = folderName.lowercase()

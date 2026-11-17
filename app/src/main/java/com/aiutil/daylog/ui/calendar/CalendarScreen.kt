@@ -78,7 +78,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlin.math.abs
+import com.aiutil.daylog.collector.PhoneDataCollector
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
@@ -128,6 +130,7 @@ fun CalendarScreen(
     onSummarizeCall: (ActivityItem) -> Unit,
     onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
     onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
+    onMonthChanged: (year: Int, month: Int) -> Unit = { _, _ -> },
     onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -144,6 +147,11 @@ fun CalendarScreen(
         val ym = DateUtils.yearMonthOf(selectedDateKey)
         year = ym.first
         month = ym.second
+    }
+
+    // 보고 있는 연·월이 바뀔 때마다 해당 월의 구글 달력 일정을 동기화
+    LaunchedEffect(year, month) {
+        onMonthChanged(year, month)
     }
 
     var showAddNoteDialog by remember { mutableStateOf(false) }
@@ -427,6 +435,13 @@ fun CalendarScreen(
                                     val rec = recordsByDate[dateKey]
                                     val isSelected = dateKey == selectedDateKey
                                     val isToday = dateKey == todayKey
+                                    val gcalNotes = rec?.activities.orEmpty().filter {
+                                        it.type == ActivityType.NOTE && it.id.startsWith(PhoneDataCollector.GCAL_ACTIVITY_PREFIX)
+                                    }
+                                    val gcalPreview = gcalNotes.firstOrNull()?.title
+                                        ?.removePrefix(PhoneDataCollector.GCAL_TITLE_PREFIX)
+                                        ?.trim()
+                                        .orEmpty()
                                     val dotCount = when {
                                         rec == null || !rec.hasAnyData -> 0
                                         (rec.places.isNotEmpty() && rec.photos.isNotEmpty() && rec.activities.isNotEmpty()) -> 3
@@ -437,7 +452,7 @@ fun CalendarScreen(
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .aspectRatio(1.02f)
+                                            .aspectRatio(0.86f)
                                             .clip(RoundedCornerShape(10.dp))
                                             .background(
                                                 if (isSelected) MaterialTheme.colorScheme.primary
@@ -454,7 +469,8 @@ fun CalendarScreen(
                                                     Modifier
                                                 }
                                             )
-                                            .clickable { onSelectDate(dateKey) },
+                                            .clickable { onSelectDate(dateKey) }
+                                            .padding(horizontal = 2.dp, vertical = 3.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Column(
@@ -471,15 +487,15 @@ fun CalendarScreen(
                                                     else -> MaterialTheme.colorScheme.onSurface
                                                 },
                                             )
-                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Spacer(modifier = Modifier.height(2.dp))
                                             Row(
                                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                                modifier = Modifier.height(5.dp),
+                                                modifier = Modifier.height(4.dp),
                                             ) {
                                                 repeat(dotCount) {
                                                     Box(
                                                         modifier = Modifier
-                                                            .size(4.dp)
+                                                            .size(3.5.dp)
                                                             .clip(CircleShape)
                                                             .background(
                                                                 if (isSelected) {
@@ -490,6 +506,37 @@ fun CalendarScreen(
                                                             ),
                                                     )
                                                 }
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            if (gcalPreview.isNotBlank()) {
+                                                val badgeText = if (gcalNotes.size > 1) {
+                                                    "${gcalPreview.take(4)}+${gcalNotes.size - 1}"
+                                                } else {
+                                                    gcalPreview
+                                                }
+                                                Surface(
+                                                    color = if (isSelected) {
+                                                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.22f)
+                                                    } else {
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.13f)
+                                                    },
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text(
+                                                        text = badgeText,
+                                                        fontSize = 8.sp,
+                                                        lineHeight = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        textAlign = TextAlign.Center,
+                                                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp),
+                                                    )
+                                                }
+                                            } else {
+                                                Spacer(modifier = Modifier.height(12.dp))
                                             }
                                         }
                                     }
@@ -593,7 +640,11 @@ fun CalendarScreen(
                     item = noteItem,
                     isAiBusy = isAiBusy,
                     onSummarizeCall = null,
-                    onDelete = { onDeleteNote(selectedDateKey, noteItem.id) },
+                    onDelete = if (noteItem.id.startsWith(PhoneDataCollector.GCAL_ACTIVITY_PREFIX)) {
+                        null
+                    } else {
+                        { onDeleteNote(selectedDateKey, noteItem.id) }
+                    },
                 )
             }
         }

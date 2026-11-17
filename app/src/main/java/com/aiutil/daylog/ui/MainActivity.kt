@@ -105,6 +105,7 @@ class MainActivity : ComponentActivity() {
             callLogGranted = collector.hasCallLogPermission(),
             contactsGranted = collector.hasContactsPermission(),
             smsGranted = collector.hasSmsPermission(),
+            calendarGranted = collector.hasCalendarPermission(),
             locationGranted = locationGranted,
             backgroundLocationGranted = bgGranted,
             notificationPostGranted = postNotifGranted,
@@ -137,6 +138,7 @@ class MainActivity : ComponentActivity() {
             add(Manifest.permission.READ_CALL_LOG)
             add(Manifest.permission.READ_CONTACTS)
             add(Manifest.permission.READ_SMS)
+            add(Manifest.permission.READ_CALENDAR)
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }.toTypedArray()
