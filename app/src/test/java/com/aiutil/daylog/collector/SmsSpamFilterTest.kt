@@ -40,6 +40,20 @@ class SmsSpamFilterTest {
         // 해외 승인 USD 포맷 인식 검증
         val foreignMsg = "[현대카드] 해외승인 USD 12.50 11/17 스타벅스"
         assertTrue(SmsSpamFilter.isPaymentOrBankSms(foreignMsg))
+
+        // 삼성 채팅+(RCS/RBM) JSON 카드 메시지 및 11/07 신한카드 승인 실전 포맷 검증
+        val rcsJson = """
+            {"layout":{"children":[{"type":"text_view","text":"알림","fontColor":"#AAAAAA"},{"type":"text_view","text":"신한카드(0597)승인 유*종"},{"type":"text_view","text":"5,800원(일시불)11/07 06:07"},{"type":"text_view","text":"지에스25(GS2 누적2,820,200원"}]}}
+        """.trimIndent()
+        val extracted = SmsSpamFilter.extractReadableMessageText(rcsJson)
+        assertTrue(SmsSpamFilter.isPaymentOrBankSms(extracted))
+        val parsedRcs = SmsSpamFilter.parsePaymentDetail("1544-7200", extracted)
+        assertEquals(5800L, parsedRcs.amountWon)
+        assertEquals("지에스25(GS2 · 5,800원", parsedRcs.title)
+
+        val shinhan2 = SmsSpamFilter.parsePaymentDetail("1544-7200", "신한카드(0597)승인 유*종 8,000원(일시불)11/07 06:19 또와타운 누적2,828,200원")
+        assertEquals(8000L, shinhan2.amountWon)
+        assertEquals("또와타운 · 8,000원", shinhan2.title)
     }
 
     @Test

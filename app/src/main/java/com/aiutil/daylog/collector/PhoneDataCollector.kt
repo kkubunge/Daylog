@@ -160,6 +160,20 @@ class PhoneDataCollector(
             emptyMap()
         }
 
+        val rcsMap = if ((settings.collectSms || settings.collectPayments) && hasSmsPermission()) {
+            queryRcsLogs(
+                startMs = startMs,
+                endMs = endMs,
+                targetKeys = targetSet,
+                collectSms = settings.collectSms,
+                collectPayments = settings.collectPayments,
+                filterSpam = settings.filterSpamSms,
+                contactCache = contactCache,
+            )
+        } else {
+            emptyMap()
+        }
+
         val notifMap = if (settings.collectSns || settings.collectPayments) {
             snsCaptureStore.itemsByDateRange(targetSet).mapValues { (_, list) ->
                 list.filter { item ->
@@ -186,11 +200,12 @@ class PhoneDataCollector(
                 .filter { it.aiCallSummary.isNotBlank() }
                 .associate { it.id to it.aiCallSummary }
             val manualNotes = current?.activities.orEmpty().filter { it.type == ActivityType.NOTE }
-            val mergedActivities = (
+            val rawMergedActivities = (
                 manualNotes +
                     callsMap[key].orEmpty() +
                     smsMap[key].orEmpty() +
                     mmsMap[key].orEmpty() +
+                    rcsMap[key].orEmpty() +
                     notifMap[key].orEmpty()
                 )
                 .distinctBy { it.id }
@@ -203,6 +218,7 @@ class PhoneDataCollector(
                     }
                 }
                 .sortedBy { it.timestampMs }
+            val mergedActivities = deduplicatePaymentActivities(rawMergedActivities)
 
             val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(key, photos, aliases)
             val gpsVisits = gpsMap[key].orEmpty()
@@ -597,7 +613,8 @@ class PhoneDataCollector(
                 while (cursor.moveToNext()) {
                     val smsId = if (idIdx >= 0) cursor.getLong(idIdx) else 0L
                     val address = if (addrIdx >= 0) cursor.getString(addrIdx).orEmpty() else ""
-                    val body = if (bodyIdx >= 0) cursor.getString(bodyIdx).orEmpty() else ""
+                    val rawBody = if (bodyIdx >= 0) cursor.getString(bodyIdx).orEmpty() else ""
+                    val body = SmsSpamFilter.extractReadableMessageText(rawBody)
                     val dateMs = if (dateIdx >= 0) cursor.getLong(dateIdx) else 0L
                     val msgType = if (typeIdx >= 0) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
 
@@ -805,6 +822,183 @@ class PhoneDataCollector(
                 ""
             }.orEmpty()
         }.getOrDefault("")
+    }
+
+    /**
+     * 삼성 채팅+(RCS / 확인된 발신번호 기업 알림) DB 경로(content://im/chat, content://im/rcs_read_im)에서
+     * 카드 승인·결제·일반 RCS 문자를 조회한다.
+     */
+    private fun queryRcsLogs(
+        startMs: Long,
+        endMs: Long,
+        targetKeys: Set<String>,
+        collectSms: Boolean,
+        collectPayments: Boolean,
+        filterSpam: Boolean,
+        contactCache: MutableMap<String, String>,
+    ): Map<String, List<ActivityItem>> {
+        val result = mutableMapOf<String, MutableList<ActivityItem>>()
+        val candidateUris = listOf(
+            Uri.parse("content://im/chat"),
+            Uri.parse("content://im/rcs_read_im"),
+        )
+        val seenKeys = mutableSetOf<String>()
+
+        for (rcsUri in candidateUris) {
+            var usedFilteredQuery = true
+            val cursor = runCatching {
+                context.contentResolver.query(
+                    rcsUri,
+                    null,
+                    "date BETWEEN ? AND ?",
+                    arrayOf(startMs.toString(), endMs.toString()),
+                    null,
+                )
+            }.getOrNull() ?: run {
+                usedFilteredQuery = false
+                runCatching {
+                    context.contentResolver.query(rcsUri, null, null, null, "_id DESC")
+                }.getOrNull() ?: runCatching {
+                    context.contentResolver.query(rcsUri, null, null, null, null)
+                }.getOrNull()
+            } ?: continue
+
+            runCatching {
+                cursor.use { c ->
+                    val colIdx = c.columnNames.associateWith { name -> c.getColumnIndex(name) }
+                    fun firstLong(vararg keys: String): Long {
+                        for (k in keys) {
+                            val idx = colIdx[k] ?: continue
+                            if (idx >= 0) {
+                                val v = runCatching { c.getLong(idx) }.getOrNull()
+                                    ?: runCatching { c.getString(idx)?.toLongOrNull() }.getOrNull()
+                                if (v != null && v > 0L) return v
+                            }
+                        }
+                        return 0L
+                    }
+                    fun firstStr(vararg keys: String): String {
+                        for (k in keys) {
+                            val idx = colIdx[k] ?: continue
+                            if (idx >= 0) {
+                                val v = runCatching { c.getString(idx) }.getOrNull()?.trim().orEmpty()
+                                if (v.isNotBlank()) return v
+                            }
+                        }
+                        return ""
+                    }
+
+                    val totalCount = c.count
+                    val indices: Iterable<Int> = if (usedFilteredQuery) {
+                        0 until totalCount
+                    } else {
+                        // 필터 없는 전체 조회일 때는 역순으로 최신 5000건을 우선 탐색
+                        val startPos = totalCount - 1
+                        val minPos = (totalCount - 5000).coerceAtLeast(0)
+                        startPos downTo minPos
+                    }
+
+                    var scanned = 0
+                    for (pos in indices) {
+                        if (!c.moveToPosition(pos)) continue
+                        scanned++
+                        val rawDate = firstLong("date", "date_sent", "displayed_timestamp", "sent_timestamp", "timestamp")
+                        val dateMs = when {
+                            rawDate <= 0L -> continue
+                            rawDate < 10_000_000_000L -> rawDate * 1000L
+                            else -> rawDate
+                        }
+                        if (dateMs !in startMs..endMs) continue
+
+                        val dateKey = DateUtils.dateKeyFromMs(dateMs)
+                        if (dateKey !in targetKeys) continue
+
+                        val rawBody = firstStr("body", "content", "text", "snippet", "msg_content")
+                        if (rawBody.isBlank()) continue
+                        val body = SmsSpamFilter.extractReadableMessageText(rawBody)
+                        if (body.isBlank()) continue
+
+                        val rawAddr = firstStr("address", "remote_uri", "sender", "from_address", "session_address", "recipient_address")
+                        val address = normalizeRcsAddress(rawAddr)
+                        val rowId = firstStr("_id", "msg_id", "message_id")
+                        val dedupKey = "${dateMs / 1000L}_${address}_${body.take(40)}"
+                        if (!seenKeys.add(dedupKey)) continue
+
+                        val isPayment = SmsSpamFilter.isPaymentOrBankSms(body)
+                        if (!isPayment && filterSpam && SmsSpamFilter.isSpamOrNoiseSms(address, body)) continue
+
+                        val msgTypeInt = firstLong("type", "direction", "msg_type").toInt()
+                        val isSent = msgTypeInt == 2 || msgTypeInt == 0 // 일부 RCS DB에서 0/2가 발신일 수 있으나 TEXT 우선 구분
+                        val personName = resolvePersonName("", address, contactCache)
+
+                        if (isPayment) {
+                            if (!collectPayments) continue
+                            val parsed = SmsSpamFilter.parsePaymentDetail(personName, body)
+                            result.getOrPut(dateKey) { mutableListOf() }.add(
+                                ActivityItem(
+                                    id = "pay_rcs_${rowId.ifBlank { scanned.toString() }}_$dateMs",
+                                    dateKey = dateKey,
+                                    timestampMs = dateMs,
+                                    type = ActivityType.PAYMENT,
+                                    title = parsed.title,
+                                    detail = parsed.detail,
+                                    amountWon = parsed.amountWon,
+                                )
+                            )
+                        } else if (collectSms) {
+                            val title = if (isSent && address.isNotBlank() && personName != address) {
+                                "$personName (RCS)"
+                            } else {
+                                personName
+                            }
+                            result.getOrPut(dateKey) { mutableListOf() }.add(
+                                ActivityItem(
+                                    id = "rcs_${rowId.ifBlank { scanned.toString() }}_$dateMs",
+                                    dateKey = dateKey,
+                                    timestampMs = dateMs,
+                                    type = ActivityType.SMS,
+                                    title = title,
+                                    detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    private fun normalizeRcsAddress(raw: String): String {
+        var clean = raw.trim()
+        if (clean.startsWith("tel:", ignoreCase = true)) clean = clean.substring(4)
+        if (clean.startsWith("sip:", ignoreCase = true)) clean = clean.substring(4).substringBefore("@")
+        if (clean.startsWith("+82")) {
+            val rest = clean.substring(3)
+            clean = if (rest.startsWith("10")) "0$rest" else rest
+        }
+        return clean.trim()
+    }
+
+    private fun deduplicatePaymentActivities(items: List<ActivityItem>): List<ActivityItem> {
+        val result = mutableListOf<ActivityItem>()
+        for (item in items) {
+            if (item.type != ActivityType.PAYMENT || item.amountWon <= 0L) {
+                result.add(item)
+                continue
+            }
+            val dupIdx = result.indexOfFirst { prev ->
+                prev.type == ActivityType.PAYMENT &&
+                    prev.amountWon == item.amountWon &&
+                    kotlin.math.abs(prev.timestampMs - item.timestampMs) <= 180_000L
+            }
+            if (dupIdx < 0) {
+                result.add(item)
+            } else if (item.detail.length > result[dupIdx].detail.length && !result[dupIdx].id.startsWith("pay_sms_")) {
+                result[dupIdx] = item
+            }
+        }
+        return result
     }
 
     private fun resolvePersonName(

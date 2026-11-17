@@ -1,5 +1,10 @@
 package com.aiutil.daylog.collector
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -156,6 +161,47 @@ object SmsSpamFilter {
         )
     }
 
+    private val rbmTextKeys = setOf(
+        "text", "title", "description", "subtitle", "subTitle", "label", "body", "value", "message",
+    )
+
+    /**
+     * 삼성 채팅+(RCS/RBM)의 JSON 본문에서 사람이 읽는 텍스트(카드사·금액·가맹점)만 추출한다.
+     * 일반 텍스트 메시지는 그대로 반환한다.
+     */
+    fun extractReadableMessageText(rawBody: String): String {
+        val trimmed = rawBody.trim()
+        if (trimmed.isEmpty()) return ""
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return trimmed
+
+        val parsed = runCatching { Json.parseToJsonElement(trimmed) }.getOrNull() ?: return trimmed
+        val collected = mutableListOf<String>()
+        collectRbmJsonStrings(parsed, parentKey = "", out = collected)
+        val joined = collected
+            .map { whitespaceRegex.replace(it, " ").trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" ")
+        return joined.ifBlank { trimmed }
+    }
+
+    private fun collectRbmJsonStrings(element: JsonElement, parentKey: String, out: MutableList<String>) {
+        when (element) {
+            is JsonPrimitive -> {
+                if (!element.isString) return
+                val v = element.content.trim()
+                if (v.isBlank()) return
+                val isTextKey = parentKey in rbmTextKeys || parentKey.isEmpty()
+                if (!isTextKey) return
+                if (v.startsWith("#") && v.length in 4..9) return
+                if (urlRegex.matches(v)) return
+                out.add(v)
+            }
+            is JsonArray -> element.forEach { collectRbmJsonStrings(it, parentKey, out) }
+            is JsonObject -> element.forEach { (k, v) -> collectRbmJsonStrings(v, k, out) }
+        }
+    }
+
     private fun extractMerchantFromBody(cleaned: String): String {
         // 패턴 1: "바이탈에어코(으)로 17,800원 결제가...", "스타벅스코리아에서 4,500원 결제"
         val byParticle = Regex("([가-힣A-Za-z0-9_()&.]{2,24}?)(?:\\(으\\)로|에서)\\s*[0-9,]+\\s*(?:원|KRW)")
@@ -164,8 +210,8 @@ object SmsSpamFilter {
             if (candidate.isNotBlank()) return candidate
         }
 
-        // 패턴 2: 카드사 표준 승인 포맷 (예: "12,500원 승인 스타벅스코리아 11/17", "11/17 10:08 바이탈에어코")
-        val afterDateTime = Regex("\\b\\d{1,2}/\\d{1,2}(?:\\s+\\d{1,2}:\\d{2})?\\s+([가-힣A-Za-z0-9_()&.㈜*\\-]{2,24})")
+        // 패턴 2: 카드사 표준 승인 포맷 (예: "12,500원 승인 스타벅스코리아 11/17", "5,800원(일시불)11/07 06:07 지에스25(GS2")
+        val afterDateTime = Regex("(?:^|[\\s)\\]])\\d{1,2}/\\d{1,2}(?:\\s+\\d{1,2}:\\d{2})?\\s+([가-힣A-Za-z0-9_()&.㈜*\\-]{2,24})")
         val skipTokens = setOf("일시불", "할부", "승인", "결제", "취소", "출금", "입금", "이체", "사용", "이용", "누적", "잔액", "고객님")
         afterDateTime.findAll(cleaned).forEach { m ->
             val token = m.groupValues[1].trim()

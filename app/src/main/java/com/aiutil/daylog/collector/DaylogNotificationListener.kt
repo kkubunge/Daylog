@@ -63,18 +63,12 @@ class DaylogNotificationListener : NotificationListenerService() {
         if (isSystemNoiseNotification(body)) return
         val combinedText = if (rawTitle.isNotBlank()) "$rawTitle $body" else body
 
-        // 알려진 카드/페이 앱이 아니더라도 비문자 일반 앱 알림이 명확한 결제 문구면 함께 포착
-        val isStrongPaymentText = SmsSpamFilter.isPaymentOrBankSms(combinedText) ||
-            (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(combinedText) > 0L)
-        if (platform == null && !isPaymentApp && (!isStrongPaymentText || pkg in smsBridgePackages)) {
-            return
-        }
-
         val postTime = statusNotification.postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
         val dateKey = DateUtils.dateKeyFromMs(postTime)
         val cleanTitle = rawTitle.ifBlank { "카드/페이 알림" }.take(32)
 
-        // 결제/금융 앱이거나 알림 내용이 결제·입출금 형식이면 별도 결제(PAYMENT) 항목으로 분류
+        // 결제/금융 앱이거나 알림 내용이 명확한 카드 승인·결제·입출금 형식이면 별도 결제(PAYMENT) 항목으로 분류
+        // (삼성 채팅+/RCS DB 접근이 제한된 기기에서도 실시간 결제 알림을 포착하기 위해 메시지 앱 결제 알림도 허용)
         val isPaymentNotif = (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(combinedText) > 0L) ||
             SmsSpamFilter.isPaymentOrBankSms(combinedText)
 
@@ -94,7 +88,7 @@ class DaylogNotificationListener : NotificationListenerService() {
             return
         }
 
-        if (platform == null || !collectSns) return
+        if (platform == null || pkg in smsBridgePackages || !collectSns) return
         val cleanDetail = cleanBody(body, 72)
         val item = ActivityItem(
             id = "sns_${platform.name}_${postTime}_${(cleanTitle + cleanDetail).hashCode()}",
