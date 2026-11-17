@@ -383,7 +383,7 @@ fun PlacesInlineMapView(
     }
 }
 
-internal fun openAllPlacesInExternalMap(context: android.content.Context, places: List<PlaceVisit>) {
+fun openAllPlacesInExternalMap(context: android.content.Context, places: List<PlaceVisit>) {
     if (places.isEmpty()) return
     val url = if (places.size == 1) {
         val p = places.first()
