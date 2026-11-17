@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,21 +52,32 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
@@ -114,6 +127,7 @@ fun CalendarScreen(
     onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val initialYm = remember(selectedDateKey) { DateUtils.yearMonthOf(selectedDateKey) }
     var year by rememberSaveable { mutableIntStateOf(initialYm.first) }
     var month by rememberSaveable { mutableIntStateOf(initialYm.second) }
@@ -121,8 +135,26 @@ fun CalendarScreen(
     var placesExpanded by rememberSaveable { mutableStateOf(true) }
     var activitiesExpanded by rememberSaveable { mutableStateOf(true) }
 
+    // 날짜가 스와이프나 외부에서 바뀌면 상단 달력의 연·월도 해당 날짜로 자동 동기화
+    LaunchedEffect(selectedDateKey) {
+        val ym = DateUtils.yearMonthOf(selectedDateKey)
+        year = ym.first
+        month = ym.second
+    }
+
     var showAddNoteDialog by remember { mutableStateOf(false) }
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
+
+    var containerCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var calendarBounds by remember { mutableStateOf<Rect?>(null) }
+    var photoStripBounds by remember { mutableStateOf<Rect?>(null) }
+    var filterRowBounds by remember { mutableStateOf<Rect?>(null) }
+    var swipeHintLabel by remember { mutableStateOf<String?>(null) }
+
+    val latestSelectedDate by rememberUpdatedState(selectedDateKey)
+    val latestTodayKey by rememberUpdatedState(todayKey)
+    val latestOnSelectDate by rememberUpdatedState(onSelectDate)
+    val swipeThresholdPx = with(density) { 68.dp.toPx() }
 
     val (leadingEmpty, dayKeys) = remember(year, month) {
         DateUtils.monthGridDays(year, month)
@@ -153,11 +185,76 @@ fun CalendarScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords -> containerCoords = coords }
+            .pointerInput(swipeThresholdPx) {
+                val touchSlop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val rootPt = containerCoords?.localToRoot(down.position)
+                    val inExcludedZone = rootPt != null && (
+                        calendarBounds?.contains(rootPt) == true ||
+                            photoStripBounds?.contains(rootPt) == true ||
+                            filterRowBounds?.contains(rootPt) == true
+                        )
+                    if (inExcludedZone) return@awaitEachGesture
+
+                    var totalDx = 0f
+                    var totalDy = 0f
+                    var lockedHorizontal = false
+                    var abortedVertical = false
+
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+
+                        val delta = change.position - change.previousPosition
+                        totalDx += delta.x
+                        totalDy += delta.y
+
+                        if (!lockedHorizontal && !abortedVertical) {
+                            if (abs(totalDy) > touchSlop && abs(totalDy) >= abs(totalDx)) {
+                                abortedVertical = true
+                                break
+                            } else if (abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) * 1.4f) {
+                                lockedHorizontal = true
+                            }
+                        }
+
+                        if (lockedHorizontal) {
+                            change.consume()
+                            swipeHintLabel = if (totalDx > 0f) {
+                                val prevKey = DateUtils.daysAgoKey(latestSelectedDate, 1)
+                                "◀ ${DateUtils.formatShortKoreanDate(prevKey)}"
+                            } else {
+                                val nextKey = DateUtils.daysAgoKey(latestSelectedDate, -1)
+                                if (nextKey <= latestTodayKey) "${DateUtils.formatShortKoreanDate(nextKey)} ▶" else null
+                            }
+                        }
+                    }
+
+                    swipeHintLabel = null
+                    if (lockedHorizontal && abs(totalDx) >= swipeThresholdPx) {
+                        val targetKey = if (totalDx > 0f) {
+                            DateUtils.daysAgoKey(latestSelectedDate, 1)
+                        } else {
+                            DateUtils.daysAgoKey(latestSelectedDate, -1)
+                        }
+                        if (targetKey <= latestTodayKey) {
+                            latestOnSelectDate(targetKey)
+                        }
+                    }
+                }
+            },
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         // 권한 미연결 시 미니멀 안내 바
         if (!permissionStatus.anyDataGranted) {
             item(key = "perm_hint") {
@@ -188,11 +285,18 @@ fun CalendarScreen(
 
         // 1. 상단 깔끔한 모노톤 월간 달력
         item(key = "calendar_card") {
+            DisposableEffect(Unit) {
+                onDispose { calendarBounds = null }
+            }
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords ->
+                        calendarBounds = if (coords.isAttached) coords.boundsInRoot() else null
+                    },
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                     Row(
@@ -471,8 +575,15 @@ fun CalendarScreen(
                     }
                 }
 
+                DisposableEffect(Unit) {
+                    onDispose { filterRowBounds = null }
+                }
                 Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            filterRowBounds = if (coords.isAttached) coords.boundsInRoot() else null
+                        }
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     DaySectionFilter.entries.forEach { filter ->
@@ -623,7 +734,15 @@ fun CalendarScreen(
                     )
                 }
                 item(key = "photos_strip") {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DisposableEffect(Unit) {
+                        onDispose { photoStripBounds = null }
+                    }
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            photoStripBounds = if (coords.isAttached) coords.boundsInRoot() else null
+                        },
+                    ) {
                         itemsIndexed(photos, key = { _, p -> p.uri }) { idx, photo ->
                             Column(
                                 modifier = Modifier
@@ -801,6 +920,27 @@ fun CalendarScreen(
 
         item(key = "cal_bottom_spacer") {
             Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+
+        val hintText = swipeHintLabel
+        if (hintText != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(999.dp),
+                tonalElevation = 4.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 18.dp),
+            ) {
+                Text(
+                    text = hintText,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 
