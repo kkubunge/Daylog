@@ -10,10 +10,16 @@ import com.aiutil.daylog.model.SnsPlatform
 import com.aiutil.daylog.util.DateUtils
 
 /**
- * 카카오톡, 인스타그램, 스레드, 텔레그램, 라인, X 등의 알림을
+ * SNS/메신저 알림 및 간편결제·카드·은행 앱 결제 알림을
  * 시간순 활동 데이터로 자동 기록하는 리스너 서비스.
  */
 class DaylogNotificationListener : NotificationListenerService() {
+
+    private val paymentAppKeywords = listOf(
+        "spay", "kakaopay", "naverfin", "toss", "kbstar", "kbcard",
+        "shinhan", "hyundaicard", "samsungcard", "woori", "hanapay",
+        "hanabank", "nhcard", "nonghyup", "kakaobank", "kbank", "payco", "lottecard",
+    )
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val statusNotification = sbn ?: return
@@ -21,11 +27,14 @@ class DaylogNotificationListener : NotificationListenerService() {
         if (pkg == packageName) return
 
         val settings = runCatching { App.settings.settings.value }.getOrNull()
-        if (settings != null && !settings.collectSns) return
+        val collectSns = settings?.collectSns ?: true
+        val collectPayments = settings?.collectPayments ?: true
 
-        val platform = SnsPlatform.fromPackageName(pkg) ?: return
+        val platform = SnsPlatform.fromPackageName(pkg)
+        val isPaymentApp = isKnownPaymentPackage(pkg)
+        if (platform == null && !isPaymentApp) return
+
         val notification = statusNotification.notification ?: return
-
         val flags = notification.flags
         if ((flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
         if ((flags and Notification.FLAG_ONGOING_EVENT) != 0) return
@@ -42,8 +51,29 @@ class DaylogNotificationListener : NotificationListenerService() {
         val postTime = statusNotification.postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
         val dateKey = DateUtils.dateKeyFromMs(postTime)
         val cleanTitle = rawTitle.take(32)
-        val cleanDetail = cleanBody(body, 72)
 
+        // 결제/금융 앱이거나 알림 내용이 결제·입출금 형식이면 별도 결제(PAYMENT) 항목으로 분류
+        val isPaymentNotif = (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(body) > 0L) ||
+            SmsSpamFilter.isPaymentOrBankSms(body)
+
+        if (isPaymentNotif) {
+            if (!collectPayments) return
+            val parsed = SmsSpamFilter.parsePaymentDetail(cleanTitle, body)
+            val item = ActivityItem(
+                id = "pay_push_${pkg.hashCode()}_${postTime}_${body.hashCode()}",
+                dateKey = dateKey,
+                timestampMs = postTime,
+                type = ActivityType.PAYMENT,
+                title = parsed.title,
+                detail = parsed.detail,
+                amountWon = parsed.amountWon,
+            )
+            runCatching { App.snsCaptures.appendActivity(item) }
+            return
+        }
+
+        if (platform == null || !collectSns) return
+        val cleanDetail = cleanBody(body, 72)
         val item = ActivityItem(
             id = "sns_${platform.name}_${postTime}_${(cleanTitle + cleanDetail).hashCode()}",
             dateKey = dateKey,
@@ -53,10 +83,12 @@ class DaylogNotificationListener : NotificationListenerService() {
             title = cleanTitle,
             detail = cleanDetail,
         )
+        runCatching { App.snsCaptures.appendActivity(item) }
+    }
 
-        runCatching {
-            App.snsCaptures.appendActivity(item)
-        }
+    private fun isKnownPaymentPackage(pkg: String): Boolean {
+        val lower = pkg.lowercase()
+        return paymentAppKeywords.any { lower.contains(it) }
     }
 
     private fun isSystemNoiseNotification(body: String): Boolean {

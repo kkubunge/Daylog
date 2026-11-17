@@ -115,14 +115,27 @@ class PhoneDataCollector(
             emptyMap()
         }
 
-        val smsMap = if (settings.collectSms && hasSmsPermission()) {
-            querySmsLogs(startMs, endMs, targetSet, settings.filterSpamSms, contactCache)
+        val smsMap = if ((settings.collectSms || settings.collectPayments) && hasSmsPermission()) {
+            querySmsLogs(
+                startMs = startMs,
+                endMs = endMs,
+                targetKeys = targetSet,
+                collectSms = settings.collectSms,
+                collectPayments = settings.collectPayments,
+                filterSpam = settings.filterSpamSms,
+                contactCache = contactCache,
+            )
         } else {
             emptyMap()
         }
 
-        val snsMap = if (settings.collectSns) {
-            snsCaptureStore.itemsByDateRange(targetSet)
+        val notifMap = if (settings.collectSns || settings.collectPayments) {
+            snsCaptureStore.itemsByDateRange(targetSet).mapValues { (_, list) ->
+                list.filter { item ->
+                    (item.type == ActivityType.PAYMENT && settings.collectPayments) ||
+                        (item.type != ActivityType.PAYMENT && settings.collectSns)
+                }
+            }
         } else {
             emptyMap()
         }
@@ -143,7 +156,7 @@ class PhoneDataCollector(
                 manualNotes +
                     callsMap[key].orEmpty() +
                     smsMap[key].orEmpty() +
-                    snsMap[key].orEmpty()
+                    notifMap[key].orEmpty()
                 )
                 .distinctBy { it.id }
                 .sortedBy { it.timestampMs }
@@ -366,6 +379,8 @@ class PhoneDataCollector(
         startMs: Long,
         endMs: Long,
         targetKeys: Set<String>,
+        collectSms: Boolean,
+        collectPayments: Boolean,
         filterSpam: Boolean,
         contactCache: MutableMap<String, String>,
     ): Map<String, List<ActivityItem>> {
@@ -411,22 +426,40 @@ class PhoneDataCollector(
                     if (dateKey !in targetKeys) continue
 
                     val personName = resolvePersonName("", address, contactCache)
-                    val title = if (msgType == Telephony.Sms.MESSAGE_TYPE_SENT) {
-                        "$personName (발신)"
-                    } else {
-                        personName
-                    }
+                    val isPayment = SmsSpamFilter.isPaymentOrBankSms(body)
 
-                    result.getOrPut(dateKey) { mutableListOf() }.add(
-                        ActivityItem(
-                            id = "sms_${smsId}_$dateMs",
-                            dateKey = dateKey,
-                            timestampMs = dateMs,
-                            type = ActivityType.SMS,
-                            title = title,
-                            detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                    if (isPayment) {
+                        if (!collectPayments) continue
+                        val parsed = SmsSpamFilter.parsePaymentDetail(personName, body)
+                        result.getOrPut(dateKey) { mutableListOf() }.add(
+                            ActivityItem(
+                                id = "pay_sms_${smsId}_$dateMs",
+                                dateKey = dateKey,
+                                timestampMs = dateMs,
+                                type = ActivityType.PAYMENT,
+                                title = parsed.title,
+                                detail = parsed.detail,
+                                amountWon = parsed.amountWon,
+                            )
                         )
-                    )
+                    } else {
+                        if (!collectSms) continue
+                        val title = if (msgType == Telephony.Sms.MESSAGE_TYPE_SENT) {
+                            "$personName (발신)"
+                        } else {
+                            personName
+                        }
+                        result.getOrPut(dateKey) { mutableListOf() }.add(
+                            ActivityItem(
+                                id = "sms_${smsId}_$dateMs",
+                                dateKey = dateKey,
+                                timestampMs = dateMs,
+                                type = ActivityType.SMS,
+                                title = title,
+                                detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                            )
+                        )
+                    }
                 }
             }
         }

@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
@@ -92,6 +93,7 @@ fun DayDetailSheet(
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
+    val paymentCount = current.activities.count { it.type == ActivityType.PAYMENT }
     val callCount = current.activities.count { it.type == ActivityType.CALL }
     val smsCount = current.activities.count { it.type == ActivityType.SMS }
     val snsCount = current.activities.count { it.type == ActivityType.SNS }
@@ -118,13 +120,16 @@ fun DayDetailSheet(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
-                        val sub = if (current.totalMoveMeters > 0) {
-                            "총 이동거리 약 ${DateUtils.formatDistanceKorean(current.totalMoveMeters)}"
-                        } else {
-                            "일자별 전체 활동 및 위치 내역"
+                        val subParts = buildList {
+                            if (current.totalMoveMeters > 0) {
+                                add("총 이동 약 ${DateUtils.formatDistanceKorean(current.totalMoveMeters)}")
+                            }
+                            if (current.totalPaymentWon > 0L) {
+                                add("결제 ${SmsSpamFilter.formatWon(current.totalPaymentWon)}")
+                            }
                         }
                         Text(
-                            text = sub,
+                            text = if (subParts.isNotEmpty()) subParts.joinToString(" · ") else "일자별 전체 활동 및 위치 내역",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -151,6 +156,7 @@ fun DayDetailSheet(
                 SummaryMetricStrip(
                     placeCount = current.places.size,
                     photoCount = current.photos.size,
+                    paymentCount = paymentCount,
                     callCount = callCount,
                     smsCount = smsCount,
                     snsCount = snsCount,

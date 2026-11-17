@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DayRecord
@@ -286,6 +287,9 @@ internal fun buildRecordsContext(records: List<DayRecord>, maxDays: Int = 40): S
             append("[${DateUtils.formatKoreanDate(rec.dateKey)} / ${rec.dateKey}]")
             if (rec.totalMoveMeters > 0) {
                 append(" 이동약 ${DateUtils.formatDistanceKorean(rec.totalMoveMeters)}")
+            }
+            if (rec.totalPaymentWon > 0L) {
+                append(" 결제합계 ${SmsSpamFilter.formatWon(rec.totalPaymentWon)}")
             }
             if (rec.places.isNotEmpty()) {
                 append("\n장소: ")

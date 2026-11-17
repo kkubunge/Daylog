@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DayRecord
@@ -55,6 +56,7 @@ private enum class FeedFilter(val label: String) {
     ALL("전체"),
     PLACE("장소"),
     PHOTO("사진"),
+    PAYMENT("결제"),
     CALL("통화"),
     SMS("문자"),
     SNS("SNS"),
@@ -83,6 +85,7 @@ fun FeedScreen(
                 FeedFilter.ALL -> true
                 FeedFilter.PLACE -> rec.places.isNotEmpty()
                 FeedFilter.PHOTO -> rec.photos.isNotEmpty()
+                FeedFilter.PAYMENT -> rec.activities.any { it.type == ActivityType.PAYMENT }
                 FeedFilter.CALL -> rec.activities.any { it.type == ActivityType.CALL }
                 FeedFilter.SMS -> rec.activities.any { it.type == ActivityType.SMS }
                 FeedFilter.SNS -> rec.activities.any { it.type == ActivityType.SNS }
@@ -251,6 +254,7 @@ fun FeedScreen(
             }
         } else {
             items(filtered, key = { it.dateKey }) { rec ->
+                val payments = rec.activities.count { it.type == ActivityType.PAYMENT }
                 val calls = rec.activities.count { it.type == ActivityType.CALL }
                 val sms = rec.activities.count { it.type == ActivityType.SMS }
                 val sns = rec.activities.count { it.type == ActivityType.SNS }
@@ -276,9 +280,13 @@ fun FeedScreen(
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                             )
-                            if (rec.totalMoveMeters > 0) {
+                            val rightMeta = buildList {
+                                if (rec.totalPaymentWon > 0L) add("결제 ${SmsSpamFilter.formatWon(rec.totalPaymentWon)}")
+                                if (rec.totalMoveMeters > 0) add("이동 ${DateUtils.formatDistanceKorean(rec.totalMoveMeters)}")
+                            }.joinToString(" · ")
+                            if (rightMeta.isNotBlank()) {
                                 Text(
-                                    text = "이동 ${DateUtils.formatDistanceKorean(rec.totalMoveMeters)}",
+                                    text = rightMeta,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -288,6 +296,7 @@ fun FeedScreen(
                         SummaryMetricStrip(
                             placeCount = rec.places.size,
                             photoCount = rec.photos.size,
+                            paymentCount = payments,
                             callCount = calls,
                             smsCount = sms,
                             snsCount = sns,

@@ -9,6 +9,7 @@ import kotlinx.serialization.Serializable
 enum class ActivityType(val label: String) {
     PLACE("장소"),
     PHOTO("사진"),
+    PAYMENT("결제"),
     CALL("통화"),
     SMS("문자"),
     SNS("SNS"),
@@ -116,6 +117,7 @@ data class ActivityItem(
     val title: String,
     val detail: String,
     val durationSec: Long = 0L,
+    val amountWon: Long = 0L,
     val latitude: Double? = null,
     val longitude: Double? = null,
     val placeLabel: String = "",
@@ -156,6 +158,11 @@ data class DayRecord(
 
     val totalMoveMeters: Int
         get() = places.sumOf { it.distanceFromPrevMeters }
+
+    val totalPaymentWon: Long
+        get() = activities
+            .filter { it.type == ActivityType.PAYMENT && it.amountWon > 0L }
+            .sumOf { it.amountWon }
 }
 
 /**
@@ -173,6 +180,7 @@ data class AiSearchResult(
 data class DaylogSettings(
     val collectPhotos: Boolean = true,
     val excludeScreenshots: Boolean = false,
+    val collectPayments: Boolean = true,
     val collectCalls: Boolean = true,
     val collectSms: Boolean = true,
     val filterSpamSms: Boolean = true,

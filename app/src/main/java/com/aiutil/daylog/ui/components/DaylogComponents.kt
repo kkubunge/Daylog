@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
@@ -385,6 +387,7 @@ fun ActivityLogRow(
     val icon = when (item.type) {
         ActivityType.PLACE -> Icons.Default.LocationOn
         ActivityType.PHOTO -> Icons.Default.PhotoCamera
+        ActivityType.PAYMENT -> Icons.Default.ReceiptLong
         ActivityType.CALL -> Icons.Default.Call
         ActivityType.SMS -> Icons.Default.Sms
         ActivityType.SNS -> Icons.Default.Forum
@@ -456,6 +459,16 @@ fun ActivityLogRow(
                 }
             }
 
+            if (item.type == ActivityType.PAYMENT && item.amountWon > 0L) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = SmsSpamFilter.formatWon(item.amountWon),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+
             if (onDelete != null && item.type == ActivityType.NOTE) {
                 IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) {
                     Icon(
@@ -477,6 +490,7 @@ fun ActivityLogRow(
 fun SummaryMetricStrip(
     placeCount: Int,
     photoCount: Int,
+    paymentCount: Int,
     callCount: Int,
     smsCount: Int,
     snsCount: Int,
@@ -484,10 +498,11 @@ fun SummaryMetricStrip(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         MetricBox("장소", placeCount, Modifier.weight(1f))
         MetricBox("사진", photoCount, Modifier.weight(1f))
+        MetricBox("결제", paymentCount, Modifier.weight(1f))
         MetricBox("통화", callCount, Modifier.weight(1f))
         MetricBox("문자", smsCount, Modifier.weight(1f))
         MetricBox("SNS", snsCount, Modifier.weight(1f))

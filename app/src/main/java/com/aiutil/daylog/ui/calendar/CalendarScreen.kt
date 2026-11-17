@@ -61,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
@@ -77,6 +78,7 @@ private enum class DaySectionFilter(val label: String) {
     ALL("전체"),
     PLACE("장소"),
     PHOTO("사진"),
+    PAYMENT("결제"),
     CALL("통화"),
     SMS("문자"),
     SNS("SNS"),
@@ -121,6 +123,7 @@ fun CalendarScreen(
     val places = selectedRecord?.places.orEmpty()
     val photos = selectedRecord?.photos.orEmpty()
     val activities = selectedRecord?.activities.orEmpty()
+    val paymentCount = activities.count { it.type == ActivityType.PAYMENT }
     val callCount = activities.count { it.type == ActivityType.CALL }
     val smsCount = activities.count { it.type == ActivityType.SMS }
     val snsCount = activities.count { it.type == ActivityType.SNS }
@@ -128,6 +131,7 @@ fun CalendarScreen(
     val filteredActivities = remember(activities, activeFilter) {
         when (activeFilter) {
             DaySectionFilter.ALL -> activities
+            DaySectionFilter.PAYMENT -> activities.filter { it.type == ActivityType.PAYMENT }
             DaySectionFilter.CALL -> activities.filter { it.type == ActivityType.CALL }
             DaySectionFilter.SMS -> activities.filter { it.type == ActivityType.SMS }
             DaySectionFilter.SNS -> activities.filter { it.type == ActivityType.SNS }
@@ -342,11 +346,16 @@ fun CalendarScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                     )
-                    val moveText = selectedRecord?.totalMoveMeters?.takeIf { it > 0 }?.let {
-                        "이동거리 약 ${DateUtils.formatDistanceKorean(it)}"
-                    } ?: "날짜를 누르면 해당 날의 데이터를 조회합니다"
+                    val subParts = buildList {
+                        selectedRecord?.totalMoveMeters?.takeIf { it > 0 }?.let {
+                            add("이동 약 ${DateUtils.formatDistanceKorean(it)}")
+                        }
+                        selectedRecord?.totalPaymentWon?.takeIf { it > 0L }?.let {
+                            add("결제 ${SmsSpamFilter.formatWon(it)}")
+                        }
+                    }
                     Text(
-                        text = moveText,
+                        text = if (subParts.isNotEmpty()) subParts.joinToString(" · ") else "날짜를 누르면 해당 날의 데이터를 조회합니다",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -376,6 +385,7 @@ fun CalendarScreen(
             SummaryMetricStrip(
                 placeCount = places.size,
                 photoCount = photos.size,
+                paymentCount = paymentCount,
                 callCount = callCount,
                 smsCount = smsCount,
                 snsCount = snsCount,

@@ -225,6 +225,11 @@ fun SettingsSheet(
                             onCheckedChange = { v -> onUpdateSettings { it.copy(excludeScreenshots = v) } },
                         )
                         SettingSwitchRow(
+                            title = "결제 내역 따로 기록 (카드·계좌 문자/알림)",
+                            checked = settings.collectPayments,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(collectPayments = v) } },
+                        )
+                        SettingSwitchRow(
                             title = "통화 내역 조회",
                             checked = settings.collectCalls,
                             onCheckedChange = { v -> onUpdateSettings { it.copy(collectCalls = v) } },
@@ -235,7 +240,7 @@ fun SettingsSheet(
                             onCheckedChange = { v -> onUpdateSettings { it.copy(collectSms = v) } },
                         )
                         SettingSwitchRow(
-                            title = "광고·인증번호·결제 스팸 문자 제외",
+                            title = "광고·인증번호·택배 스팸 문자 제외",
                             checked = settings.filterSpamSms,
                             onCheckedChange = { v -> onUpdateSettings { it.copy(filterSpamSms = v) } },
                         )
