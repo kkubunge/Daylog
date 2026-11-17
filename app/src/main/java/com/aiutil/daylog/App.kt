@@ -3,8 +3,10 @@ package com.aiutil.daylog
 import android.app.Application
 import com.aiutil.daylog.ai.GeminiClient
 import com.aiutil.daylog.collector.PhoneDataCollector
+import com.aiutil.daylog.collector.ScheduledScanScheduler
 import com.aiutil.daylog.data.DaylogStore
 import com.aiutil.daylog.data.LocationVisitStore
+import com.aiutil.daylog.data.ScanHistoryStore
 import com.aiutil.daylog.data.SettingsStore
 import com.aiutil.daylog.data.SnsCaptureStore
 import com.aiutil.daylog.location.GeocodingHelper
@@ -25,6 +27,7 @@ class App : Application() {
             aliasesFile = File(filesDir, "place_aliases.json"),
         )
         daylogs = DaylogStore(File(filesDir, "daylog_records_v2.json"))
+        scanHistory = ScanHistoryStore(File(filesDir, "scan_history_v1.json"))
         geocoder = GeocodingHelper(this)
         collector = PhoneDataCollector(
             context = this,
@@ -33,6 +36,7 @@ class App : Application() {
             geocoder = geocoder,
         )
         gemini = GeminiClient()
+        ScheduledScanScheduler.syncSchedule(this, settings.settings.value)
     }
 
     companion object {
@@ -49,6 +53,9 @@ class App : Application() {
             private set
 
         lateinit var daylogs: DaylogStore
+            private set
+
+        lateinit var scanHistory: ScanHistoryStore
             private set
 
         lateinit var geocoder: GeocodingHelper

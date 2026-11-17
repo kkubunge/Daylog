@@ -56,8 +56,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.aiutil.daylog.model.DateScanLog
 import com.aiutil.daylog.model.DaylogSettings
 import com.aiutil.daylog.model.PermissionStatus
+import com.aiutil.daylog.model.ScheduledRunLog
 import com.aiutil.daylog.util.DateUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,12 +70,15 @@ fun SettingsSheet(
     permissionStatus: PermissionStatus,
     isTrackingRunning: Boolean,
     isBatchScanning: Boolean,
+    scanLogsByDate: Map<String, DateScanLog> = emptyMap(),
+    scheduledRuns: List<ScheduledRunLog> = emptyList(),
     onDismiss: () -> Unit,
     onRequestRuntimePermissions: () -> Unit,
     onRequestBackgroundLocation: () -> Unit,
     onOpenNotificationListenerSettings: () -> Unit,
     onToggleTrackingService: () -> Unit,
     onBatchScanRange: (startDateKey: String, endDateKey: String) -> Unit,
+    onRunScheduledScanNow: () -> Unit = {},
     onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
     onExportJsonBackup: () -> Unit,
     onClearAllRecords: () -> Unit,
@@ -414,6 +419,24 @@ fun SettingsSheet(
                         }
                     }
                 }
+            }
+
+            // 3-2. 예약 백그라운드 불러오기 설정 & 성공 여부 달력
+            item(key = "scheduled_scan_card") {
+                ScheduledAutoScanCard(
+                    todayKey = todayKey,
+                    settings = settings,
+                    onUpdateSettings = onUpdateSettings,
+                    onRunScheduledScanNow = onRunScheduledScanNow,
+                )
+            }
+
+            item(key = "scan_status_calendar_card") {
+                ScanStatusCalendarCard(
+                    todayKey = todayKey,
+                    scanLogsByDate = scanLogsByDate,
+                    scheduledRuns = scheduledRuns,
+                )
             }
 
             // 4. Gemini AI 데이터 분석·검색 연동 (선택)

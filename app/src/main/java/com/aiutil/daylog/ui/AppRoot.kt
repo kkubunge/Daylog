@@ -65,14 +65,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.aiutil.daylog.App
+import com.aiutil.daylog.collector.ScheduledScanPlanner
+import com.aiutil.daylog.collector.ScheduledScanScheduler
 import com.aiutil.daylog.location.LocationTrackerService
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.AiSearchResult
+import com.aiutil.daylog.model.DateScanLog
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.PermissionStatus
 import com.aiutil.daylog.model.PlaceSource
 import com.aiutil.daylog.model.PlaceVisit
+import com.aiutil.daylog.model.ScanStatus
 import com.aiutil.daylog.model.SnsPlatform
 import com.aiutil.daylog.ui.calendar.CalendarScreen
 import com.aiutil.daylog.ui.components.PhotoLightboxDialog
@@ -120,6 +124,8 @@ fun AppRoot(
     val settings by App.settings.settings.collectAsState()
     val snsCaptures by App.snsCaptures.captures.collectAsState()
     val aliases by App.locationVisits.aliases.collectAsState()
+    val scanLogsByDate by App.scanHistory.dateLogs.collectAsState()
+    val scheduledRuns by App.scanHistory.runLogs.collectAsState()
     val isTrackingRunning by LocationTrackerService.isRunning.collectAsState()
 
     val todayKey = DateUtils.todayKey()
@@ -155,6 +161,15 @@ fun AppRoot(
                 val existing = App.daylogs.getRecord(dateKey)
                 val updated = App.collector.collectDate(dateKey, existing, settings)
                 App.daylogs.upsertRecord(updated)
+                App.scanHistory.recordScanResults(
+                    listOf(
+                        ScheduledScanPlanner.toDateScanLog(
+                            record = updated,
+                            scannedAtMs = System.currentTimeMillis(),
+                            isScheduled = false,
+                        )
+                    )
+                )
                 autoScannedDates = autoScannedDates + dateKey
                 if (showToast) {
                     snackbarHostState.showSnackbar(
@@ -210,6 +225,16 @@ fun AppRoot(
                 if (nonEmpty.isNotEmpty()) {
                     App.daylogs.upsertAll(nonEmpty)
                 }
+                val scanNowMs = System.currentTimeMillis()
+                App.scanHistory.recordScanResults(
+                    scanned.map { rec ->
+                        ScheduledScanPlanner.toDateScanLog(
+                            record = rec,
+                            scannedAtMs = scanNowMs,
+                            isScheduled = false,
+                        )
+                    }
+                )
                 autoScannedDates = autoScannedDates + keys
                 val paymentCount = nonEmpty.sumOf { rec ->
                     rec.activities.count { it.type == ActivityType.PAYMENT }
@@ -730,6 +755,8 @@ fun AppRoot(
             permissionStatus = permissionStatus,
             isTrackingRunning = isTrackingRunning,
             isBatchScanning = isScanning,
+            scanLogsByDate = scanLogsByDate,
+            scheduledRuns = scheduledRuns,
             onDismiss = { showSettings = false },
             onRequestRuntimePermissions = onRequestRuntimePermissions,
             onRequestBackgroundLocation = onRequestBackgroundLocation,
@@ -738,12 +765,22 @@ fun AppRoot(
             },
             onToggleTrackingService = { toggleLocationTracking() },
             onBatchScanRange = { startKey, endKey -> batchScanDateRange(startKey, endKey) },
-            onUpdateSettings = { transform -> App.settings.update(transform) },
+            onRunScheduledScanNow = {
+                ScheduledScanScheduler.enqueueBackgroundScan(context)
+                scope.launch {
+                    snackbarHostState.showSnackbar("백그라운드 예약 불러오기를 시작했습니다. 완료되면 달력에 반영됩니다.")
+                }
+            },
+            onUpdateSettings = { transform ->
+                App.settings.update(transform)
+                ScheduledScanScheduler.syncSchedule(context, App.settings.settings.value)
+            },
             onExportJsonBackup = { scope.launch { shareBackupJson(context) } },
             onClearAllRecords = {
                 App.daylogs.clearAll()
                 App.snsCaptures.clearAll()
                 App.locationVisits.clearAll()
+                App.scanHistory.clearAll()
                 autoScannedDates = emptySet()
                 showSettings = false
                 scope.launch { snackbarHostState.showSnackbar("모든 기록을 초기화했습니다.") }

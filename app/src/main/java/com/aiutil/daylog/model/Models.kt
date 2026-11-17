@@ -225,6 +225,55 @@ data class DaylogSettings(
     val locationIntervalMin: Int = 3,
     val stayThresholdMin: Int = 3,
     val geminiApiKey: String = "",
+    // 예약 자동 백그라운드 불러오기 설정
+    val autoScanEnabled: Boolean = false,
+    val autoScanHour: Int = 2,
+    val autoScanMinute: Int = 0,
+    val autoScanStartDateKey: String = "",
+    val autoScanChunkDays: Int = 100,
+    val autoScanStepBackDaily: Boolean = true,
+    val autoScanCursorEndKey: String = "",
+)
+
+/**
+ * 날짜별 스캔 상태 (설정 내 스캔 성공 여부 달력 표시용).
+ */
+@Serializable
+enum class ScanStatus(val label: String) {
+    SUCCESS("성공"),
+    EMPTY("데이터 없음"),
+    FAILED("실패"),
+}
+
+/**
+ * 특정 날짜(yyyy-MM-dd)의 수동·예약 스캔 결과 요약.
+ */
+@Serializable
+data class DateScanLog(
+    val dateKey: String,
+    val status: ScanStatus,
+    val scannedAtMs: Long,
+    val isScheduled: Boolean = false,
+    val placeCount: Int = 0,
+    val photoCount: Int = 0,
+    val paymentCount: Int = 0,
+    val activityCount: Int = 0,
+    val errorMessage: String = "",
+)
+
+/**
+ * 백그라운드 예약 불러오기 1회 실행 이력.
+ */
+@Serializable
+data class ScheduledRunLog(
+    val runAtMs: Long,
+    val startDateKey: String,
+    val endDateKey: String,
+    val totalDays: Int,
+    val successDays: Int,
+    val dataDays: Int,
+    val failedDays: Int,
+    val message: String,
 )
 
 /**
