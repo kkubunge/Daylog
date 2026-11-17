@@ -164,7 +164,6 @@ fun PhotoLightboxDialog(
 ) {
     if (photos.isEmpty()) return
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val layoutDirection = LocalLayoutDirection.current
     val safeInitial = initialIndex.coerceIn(0, photos.lastIndex)
     val pagerState = rememberPagerState(initialPage = safeInitial, pageCount = { photos.size })
@@ -222,59 +221,102 @@ fun PhotoLightboxDialog(
                     .fillMaxSize()
                     .padding(effectiveSafePadding),
             ) {
-                // 상단 페이지 표시 & 좌우 이동 버튼 · 닫기 버튼
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                // 상단 촬영 시각 · 도시/장소 · AI 내용 읽기 · 닫기 버튼
+                Surface(
+                    color = Color(0xFF1A1A1A).copy(alpha = 0.94f),
+                    shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Surface(
-                        color = Color.White.copy(alpha = 0.14f),
-                        shape = RoundedCornerShape(999.dp),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                     ) {
-                        Text(
-                            text = "${pagerState.currentPage + 1} / ${photos.size}",
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (photos.size > 1) {
-                            IconButton(
-                                onClick = {
-                                    val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
-                                    scope.launch { pagerState.animateScrollToPage(prev) }
-                                },
-                                enabled = pagerState.currentPage > 0,
-                                modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                            ) {
-                                Icon(Icons.Default.ChevronLeft, contentDescription = "이전 사진", tint = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${DateUtils.formatTimeHm(currentPhoto.dateTakenMs)} · ${currentPhoto.folderName.ifBlank { currentPhoto.displayName }}",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                val locText = listOf(currentPhoto.nearbyPoi, currentPhoto.cityName, currentPhoto.placeLabel)
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                                    .joinToString(" · ")
+                                if (locText.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "위치: $locText",
+                                        color = Color.White.copy(alpha = 0.84f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
-                            IconButton(
-                                onClick = {
-                                    val next = (pagerState.currentPage + 1).coerceAtMost(photos.lastIndex)
-                                    scope.launch { pagerState.animateScrollToPage(next) }
-                                },
-                                enabled = pagerState.currentPage < photos.lastIndex,
-                                modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                            ) {
-                                Icon(Icons.Default.ChevronRight, contentDescription = "다음 사진", tint = Color.White)
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (onAnalyzePhoto != null) {
+                                    TextButton(
+                                        onClick = { onAnalyzePhoto(currentPhoto) },
+                                        enabled = !isAnalyzing,
+                                    ) {
+                                        if (isAnalyzing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(15.dp),
+                                                strokeWidth = 2.dp,
+                                                color = Color.White,
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(15.dp),
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (currentPhoto.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
+                                            color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = onDismiss,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(Color.White.copy(alpha = 0.14f), CircleShape),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "닫기",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
                             }
                         }
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
+
+                        if (currentPhoto.aiCaption.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = currentPhoto.aiCaption,
+                                color = Color.White.copy(alpha = 0.92f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
                     }
                 }
 
-                // 중앙 사진 스와이프 영역 (남은 가용 높이만 차지해 하단 정보 카드가 절대 밀려나지 않음)
+                // 중앙 사진 스와이프 영역 (좌우 스와이프로 이동)
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
@@ -312,83 +354,23 @@ fun PhotoLightboxDialog(
                     }
                 }
 
-                // 하단 촬영 시각 · 도시/장소 · AI 내용 읽기 바 (항상 화면 내 하단에 온전히 노출)
-                Surface(
-                    color = Color(0xFF1A1A1A).copy(alpha = 0.94f),
-                    shape = RoundedCornerShape(14.dp),
+                // 하단 중앙 사진 개수 표시
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 200.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    Surface(
+                        color = Color.White.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(999.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${DateUtils.formatTimeHm(currentPhoto.dateTakenMs)} · ${currentPhoto.folderName.ifBlank { currentPhoto.displayName }}",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
-                                val locText = listOf(currentPhoto.nearbyPoi, currentPhoto.cityName, currentPhoto.placeLabel)
-                                    .filter { it.isNotBlank() }
-                                    .distinct()
-                                    .joinToString(" · ")
-                                if (locText.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "위치: $locText",
-                                        color = Color.White.copy(alpha = 0.84f),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-
-                            if (onAnalyzePhoto != null) {
-                                TextButton(
-                                    onClick = { onAnalyzePhoto(currentPhoto) },
-                                    enabled = !isAnalyzing,
-                                ) {
-                                    if (isAnalyzing) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(15.dp),
-                                            strokeWidth = 2.dp,
-                                            color = Color.White,
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(15.dp),
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (currentPhoto.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
-                                        color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                }
-                            }
-                        }
-
-                        if (currentPhoto.aiCaption.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = currentPhoto.aiCaption,
-                                color = Color.White.copy(alpha = 0.92f),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
+                        Text(
+                            text = "${pagerState.currentPage + 1} / ${photos.size}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        )
                     }
                 }
             }
