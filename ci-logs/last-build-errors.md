@@ -1,7 +1,7 @@
 # 빌드 실패 로그
 
-- commit: `f6fcee1f104389e665669b106f30dc06849f6d55`
-- run: https://github.com/kkubunge/Daylog/actions/runs/44037650587
+- commit: `2004cf88fa0ecefc226a5b30cf948076c919d86d`
+- run: https://github.com/kkubunge/Daylog/actions/runs/44047411814
 
 ## 컴파일 오류 (e: / FAILURE / what went wrong)
 ```
@@ -13,11 +13,11 @@
 > Task :app:checkDebugAarMetadata
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources FROM-CACHE
-> Task :app:mergeDebugResources FROM-CACHE
 > Task :app:packageDebugResources FROM-CACHE
 > Task :app:parseDebugLocalResources FROM-CACHE
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug FROM-CACHE
@@ -30,19 +30,19 @@
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets FROM-CACHE
 > Task :app:desugarDebugFileDependencies FROM-CACHE
-> Task :app:mergeDebugJniLibFolders
 > Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
-> Task :app:mergeExtDexDebug FROM-CACHE
+> Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources
 > Task :app:mergeLibDexDebug FROM-CACHE
 > Task :app:validateSigningDebug
-> Task :app:mergeDebugNativeLibs
 > Task :app:writeDebugAppMetadata
 > Task :app:stripDebugDebugSymbols
 > Task :app:writeDebugSigningConfigVersions
+> Task :app:mergeExtDexDebug
 > Task :app:compileDebugKotlin FAILED
-e: file:///home/runner/work/Daylog/Daylog/app/src/main/java/com/aiutil/daylog/collector/PhoneDataCollector.kt:204:70 Unresolved reference 'distanceMeters'.
+e: file:///home/runner/work/Daylog/Daylog/app/src/main/java/com/aiutil/daylog/collector/ScheduledScanWorker.kt:41:23 Unresolved reference 'hasLocationPermission'.
 FAILURE: Build failed with an exception.
 * What went wrong:
 > A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
@@ -65,11 +65,11 @@ Daemon will be stopped at the end of the build
 > Task :app:checkDebugAarMetadata
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources FROM-CACHE
-> Task :app:mergeDebugResources FROM-CACHE
 > Task :app:packageDebugResources FROM-CACHE
 > Task :app:parseDebugLocalResources FROM-CACHE
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:mergeDebugResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
 > Task :app:javaPreCompileDebug FROM-CACHE
@@ -82,24 +82,24 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets FROM-CACHE
 > Task :app:desugarDebugFileDependencies FROM-CACHE
-> Task :app:mergeDebugJniLibFolders
 > Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
-> Task :app:mergeExtDexDebug FROM-CACHE
+> Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources
 > Task :app:mergeLibDexDebug FROM-CACHE
 > Task :app:validateSigningDebug
-> Task :app:mergeDebugNativeLibs
 > Task :app:writeDebugAppMetadata
 
 > Task :app:stripDebugDebugSymbols
 Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
 
 > Task :app:writeDebugSigningConfigVersions
+> Task :app:mergeExtDexDebug
 
 > Task :app:compileDebugKotlin FAILED
-e: file:///home/runner/work/Daylog/Daylog/app/src/main/java/com/aiutil/daylog/collector/PhoneDataCollector.kt:204:70 Unresolved reference 'distanceMeters'.
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1794899936466.json
+e: file:///home/runner/work/Daylog/Daylog/app/src/main/java/com/aiutil/daylog/collector/ScheduledScanWorker.kt:41:23 Unresolved reference 'hasLocationPermission'.
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1794904303592.json
 
 FAILURE: Build failed with an exception.
 
@@ -366,6 +366,6 @@ Caused by: org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Compilat
 	... 2 more
 
 
-BUILD FAILED in 20s
-30 actionable tasks: 18 executed, 12 from cache
+BUILD FAILED in 42s
+30 actionable tasks: 20 executed, 10 from cache
 ```
