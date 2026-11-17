@@ -80,6 +80,7 @@ import com.aiutil.daylog.model.ScanStatus
 import com.aiutil.daylog.model.SnsPlatform
 import com.aiutil.daylog.ui.calendar.CalendarScreen
 import com.aiutil.daylog.ui.components.PhotoLightboxDialog
+import com.aiutil.daylog.ui.components.PlacesMapOverlay
 import com.aiutil.daylog.ui.editor.DayDetailSheet
 import com.aiutil.daylog.ui.feed.FeedScreen
 import com.aiutil.daylog.ui.places.PlacesScreen
@@ -99,6 +100,11 @@ private data class LightboxState(
     val dateKey: String,
     val photos: List<DayPhoto>,
     val initialIndex: Int,
+)
+
+private data class MapOverlayState(
+    val title: String,
+    val places: List<PlaceVisit>,
 )
 
 private enum class DaylogTab(val label: String) {
@@ -136,6 +142,7 @@ fun AppRoot(
     var detailSheetDateKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var lightboxState by remember { mutableStateOf<LightboxState?>(null) }
+    var mapOverlayState by remember { mutableStateOf<MapOverlayState?>(null) }
     var isScanning by remember { mutableStateOf(false) }
     var isAiBusy by remember { mutableStateOf(false) }
     var aiSearchResult by remember { mutableStateOf<AiSearchResult?>(null) }
@@ -489,6 +496,7 @@ fun AppRoot(
     }
 
     val curLightbox = lightboxState
+    val curMapOverlay = mapOverlayState
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -664,6 +672,7 @@ fun AppRoot(
                     onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
                     onSummarizeCall = { item -> summarizeCallRecording(item) },
                     onPhotoClick = { photos, idx -> lightboxState = LightboxState(selectedDateKey, photos, idx) },
+                    onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
                     onOpenPermissions = { showSettings = true },
                 )
 
@@ -701,13 +710,14 @@ fun AppRoot(
                         selectAndLoadDate(dateKey)
                         activeTab = DaylogTab.CALENDAR
                     },
+                    onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
                 )
             }
         }
     }
 
         val sheetDate = detailSheetDateKey
-        if (sheetDate != null && curLightbox == null) {
+        if (sheetDate != null && curLightbox == null && curMapOverlay == null) {
             DayDetailSheet(
             dateKey = sheetDate,
             record = recordsByDate[sheetDate],
@@ -748,10 +758,11 @@ fun AppRoot(
                 detailSheetDateKey = null
             },
             onPhotoClick = { photos, idx -> lightboxState = LightboxState(sheetDate, photos, idx) },
+            onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
         )
     }
 
-        if (showSettings && curLightbox == null) {
+        if (showSettings && curLightbox == null && curMapOverlay == null) {
             SettingsSheet(
             todayKey = todayKey,
             settings = settings,
@@ -799,6 +810,15 @@ fun AppRoot(
                 isAnalyzing = isAiBusy,
                 onAnalyzePhoto = { targetPhoto -> analyzeTargetPhoto(curLightbox.dateKey, targetPhoto) },
                 onDismiss = { lightboxState = null },
+            )
+        }
+
+        if (curMapOverlay != null) {
+            PlacesMapOverlay(
+                title = curMapOverlay.title,
+                places = curMapOverlay.places,
+                stayThresholdMin = settings.stayThresholdMin,
+                onDismiss = { mapOverlayState = null },
             )
         }
     }

@@ -22,6 +22,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -86,6 +89,7 @@ fun DayDetailSheet(
     onSummarizeCall: (ActivityItem) -> Unit,
     onDeleteRecord: () -> Unit,
     onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
+    onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -97,6 +101,8 @@ fun DayDetailSheet(
     var showAddNoteDialog by remember { mutableStateOf(false) }
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var placesExpanded by remember { mutableStateOf(true) }
+    var activitiesExpanded by remember { mutableStateOf(true) }
 
     val paymentCount = current.activities.count { it.type == ActivityType.PAYMENT }
     val callCount = current.activities.count { it.type == ActivityType.CALL }
@@ -168,25 +174,61 @@ fun DayDetailSheet(
                 )
             }
 
-            // 1. 이동 및 체류 장소 전체
+            // 1. 이동 및 체류 장소 전체 (전체 지도 + 펼치기/접기)
             if (current.places.isNotEmpty()) {
                 item(key = "detail_places_header") {
-                    Text(
-                        text = "이동 및 체류 장소 (${current.places.size})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { placesExpanded = !placesExpanded },
+                    ) {
+                        Text(
+                            text = "이동 및 체류 장소 (${current.places.size})",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    onOpenPlacesMap(
+                                        "${DateUtils.formatShortKoreanDate(dateKey)} 이동 지도",
+                                        current.places,
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp),
+                            ) {
+                                Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("전체 지도", style = MaterialTheme.typography.labelSmall)
+                            }
+                            IconButton(onClick = { placesExpanded = !placesExpanded }, modifier = Modifier.size(28.dp)) {
+                                Icon(
+                                    imageVector = if (placesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (placesExpanded) "접기" else "펼치기",
+                                )
+                            }
+                        }
+                    }
                 }
-                items(current.places.size, key = { idx -> "dp_${current.places[idx].id}" }) { idx ->
-                    val visit = current.places[idx]
-                    PlaceVisitTimelineItem(
-                        visit = visit,
-                        isLast = idx == current.places.lastIndex,
-                        stayThresholdMin = stayThresholdMin,
-                        onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
-                        onSaveAlias = { v -> aliasTargetVisit = v },
-                        onClassifyWithAi = onClassifyPlaceWithAi,
-                    )
+                if (placesExpanded) {
+                    items(current.places.size, key = { idx -> "dp_${current.places[idx].id}" }) { idx ->
+                        val visit = current.places[idx]
+                        PlaceVisitTimelineItem(
+                            visit = visit,
+                            isLast = idx == current.places.lastIndex,
+                            stayThresholdMin = stayThresholdMin,
+                            onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
+                            onSaveAlias = { v -> aliasTargetVisit = v },
+                            onClassifyWithAi = onClassifyPlaceWithAi,
+                        )
+                    }
                 }
             }
 
@@ -240,26 +282,42 @@ fun DayDetailSheet(
                 }
             }
 
-            // 3. 시간순 활동 내역 (통화·문자·SNS·메모)
+            // 3. 시간순 활동 내역 (통화·문자·SNS·메모 + 펼치기/접기)
             item(key = "detail_activities_header") {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { activitiesExpanded = !activitiesExpanded },
                 ) {
                     Text(
                         text = "시간순 활동 내역 (${current.activities.size})",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
                     )
-                    OutlinedButton(
-                        onClick = { showAddNoteDialog = true },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("메모 추가", style = MaterialTheme.typography.labelSmall)
+                        OutlinedButton(
+                            onClick = { showAddNoteDialog = true },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("메모 추가", style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (current.activities.isNotEmpty()) {
+                            IconButton(onClick = { activitiesExpanded = !activitiesExpanded }, modifier = Modifier.size(28.dp)) {
+                                Icon(
+                                    imageVector = if (activitiesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (activitiesExpanded) "접기" else "펼치기",
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -280,7 +338,7 @@ fun DayDetailSheet(
                         )
                     }
                 }
-            } else {
+            } else if (activitiesExpanded) {
                 items(current.activities, key = { "da_${it.id}" }) { item ->
                     ActivityLogRow(
                         item = item,

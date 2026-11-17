@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -61,6 +62,7 @@ fun PlacesScreen(
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onDeleteAlias: (aliasId: String) -> Unit,
     onOpenDate: (String) -> Unit,
+    onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
@@ -234,11 +236,29 @@ fun PlacesScreen(
 
         // 4. 최근 방문 · 체류 기록
         item(key = "recent_visits_header") {
-            Text(
-                text = "최근 방문 및 체류 장소 (${recentVisits.size})",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "최근 방문 및 체류 장소 (${recentVisits.size})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (recentVisits.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { onOpenPlacesMap("최근 이동 · 체류 지도", recentVisits) },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp),
+                    ) {
+                        Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("전체 지도", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
         }
 
         if (recentVisits.isEmpty()) {

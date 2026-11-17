@@ -30,6 +30,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Refresh
@@ -107,6 +110,7 @@ fun CalendarScreen(
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onSummarizeCall: (ActivityItem) -> Unit,
     onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
+    onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
     onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -114,6 +118,8 @@ fun CalendarScreen(
     var year by rememberSaveable { mutableIntStateOf(initialYm.first) }
     var month by rememberSaveable { mutableIntStateOf(initialYm.second) }
     var activeFilter by rememberSaveable { mutableStateOf(DaySectionFilter.ALL) }
+    var placesExpanded by rememberSaveable { mutableStateOf(true) }
+    var activitiesExpanded by rememberSaveable { mutableStateOf(true) }
 
     var showAddNoteDialog by remember { mutableStateOf(false) }
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
@@ -397,9 +403,285 @@ fun CalendarScreen(
             )
         }
 
-        // 3.5 AI 하루 브리핑 카드 (데이터가 있을 때)
+        // 4. 섹션 필터 (오늘일 때 현재 위치 기록 빠른 버튼 포함)
+        item(key = "filter_and_quick") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (selectedDateKey == todayKey) {
+                    OutlinedButton(
+                        onClick = { onCheckInCurrentLocation(selectedDateKey) },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("현재 위치 기록", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    DaySectionFilter.entries.forEach { filter ->
+                        FilterChip(
+                            selected = filter == activeFilter,
+                            onClick = { activeFilter = filter },
+                            label = { Text(filter.label, style = MaterialTheme.typography.labelMedium) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // 데이터가 아예 없을 때
+        if (selectedRecord == null || !selectedRecord.hasAnyData) {
+            item(key = "empty_day") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(24.dp),
+                    ) {
+                        Text(
+                            text = "이 날 조회된 기록이 없습니다",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "새로고침을 눌러 폰 데이터를 스캔하거나 메모·현재 위치를 남길 수 있습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(onClick = { onRefreshDate(selectedDateKey) }) {
+                            Text("이 날 데이터 불러오기")
+                        }
+                    }
+                }
+            }
+        } else {
+            // 5. 이동 · 체류 장소 타임라인 (전체 지도 보기 + 펼치기/접기)
+            if ((activeFilter == DaySectionFilter.ALL || activeFilter == DaySectionFilter.PLACE) && places.isNotEmpty()) {
+                item(key = "places_header") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { placesExpanded = !placesExpanded }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "이동 및 체류 장소 (${places.size})",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    onOpenPlacesMap(
+                                        "${DateUtils.formatShortKoreanDate(selectedDateKey)} 이동 지도",
+                                        places,
+                                    )
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(30.dp),
+                            ) {
+                                Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("전체 지도", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { placesExpanded = !placesExpanded }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = if (placesExpanded) "접기" else "펼치기",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Icon(
+                                    imageVector = if (placesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (placesExpanded) "접기" else "펼치기",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                if (placesExpanded) {
+                    items(places.size, key = { idx -> places[idx].id }) { idx ->
+                        val visit = places[idx]
+                        PlaceVisitTimelineItem(
+                            visit = visit,
+                            isLast = idx == places.lastIndex,
+                            stayThresholdMin = stayThresholdMin,
+                            onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
+                            onSaveAlias = { v -> aliasTargetVisit = v },
+                            onClassifyWithAi = onClassifyPlaceWithAi,
+                        )
+                    }
+                } else {
+                    item(key = "places_collapsed_hint") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { placesExpanded = true },
+                        ) {
+                            val preview = places.take(2).joinToString(" → ") { it.nearbyPoi.ifBlank { it.placeName } }
+                            Text(
+                                text = "${preview}${if (places.size > 2) " 외 ${places.size - 2}곳" else ""} · 눌러서 펼치기",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 6. 그날의 사진 스트립
+            if ((activeFilter == DaySectionFilter.ALL || activeFilter == DaySectionFilter.PHOTO) && photos.isNotEmpty()) {
+                item(key = "photos_header") {
+                    Text(
+                        text = "촬영 · 저장 사진 (${photos.size})",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                item(key = "photos_strip") {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        itemsIndexed(photos, key = { _, p -> p.uri }) { idx, photo ->
+                            Column(
+                                modifier = Modifier
+                                    .width(106.dp)
+                                    .clickable { onPhotoClick(photos, idx) },
+                            ) {
+                                DaylogPhotoImage(
+                                    uri = photo.uri,
+                                    maxDim = 360,
+                                    modifier = Modifier
+                                        .size(106.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)),
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = DateUtils.formatTimeHm(photo.dateTakenMs),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                val locLabel = listOf(photo.cityName, photo.placeLabel)
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                                    .joinToString(" · ")
+                                if (locLabel.isNotBlank()) {
+                                    Text(
+                                        text = locLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 7. 시간순 활동 내역 (펼치기/접기)
+            if (filteredActivities.isNotEmpty()) {
+                item(key = "activities_header") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { activitiesExpanded = !activitiesExpanded }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "활동 내역 (${filteredActivities.size})",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (activitiesExpanded) "접기" else "펼치기",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Icon(
+                                imageVector = if (activitiesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (activitiesExpanded) "접기" else "펼치기",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+                if (activitiesExpanded) {
+                    items(filteredActivities, key = { it.id }) { item ->
+                        ActivityLogRow(
+                            item = item,
+                            isAiBusy = isAiBusy,
+                            onSummarizeCall = onSummarizeCall,
+                            onDelete = if (item.type == ActivityType.NOTE) {
+                                { onDeleteNote(selectedDateKey, item.id) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                } else {
+                    item(key = "activities_collapsed_hint") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { activitiesExpanded = true },
+                        ) {
+                            Text(
+                                text = "결제·통화·문자·SNS ${filteredActivities.size}건 · 눌러서 펼치기",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 8. 맨 밑: AI 데이터 브리핑 + 간단 메모 추가
         if (selectedRecord != null && selectedRecord.hasAnyData) {
             item(key = "ai_briefing_card") {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     shape = RoundedCornerShape(12.dp),
@@ -465,179 +747,16 @@ fun CalendarScreen(
             }
         }
 
-        // 4. 빠른 액션 & 섹션 필터
-        item(key = "filter_and_quick") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (selectedDateKey == todayKey) {
-                        OutlinedButton(
-                            onClick = { onCheckInCurrentLocation(selectedDateKey) },
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("현재 위치 기록", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { showAddNoteDialog = true },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("간단 메모 추가", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    DaySectionFilter.entries.forEach { filter ->
-                        FilterChip(
-                            selected = filter == activeFilter,
-                            onClick = { activeFilter = filter },
-                            label = { Text(filter.label, style = MaterialTheme.typography.labelMedium) },
-                        )
-                    }
-                }
-            }
-        }
-
-        // 데이터가 아예 없을 때
-        if (selectedRecord == null || !selectedRecord.hasAnyData) {
-            item(key = "empty_day") {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp),
-                    ) {
-                        Text(
-                            text = "이 날 조회된 기록이 없습니다",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "새로고침을 눌러 폰 데이터를 스캔하거나 메모·현재 위치를 남길 수 있습니다.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Button(onClick = { onRefreshDate(selectedDateKey) }) {
-                            Text("이 날 데이터 불러오기")
-                        }
-                    }
-                }
-            }
-        } else {
-            // 5. 이동 · 체류 장소 타임라인
-            if ((activeFilter == DaySectionFilter.ALL || activeFilter == DaySectionFilter.PLACE) && places.isNotEmpty()) {
-                item(key = "places_header") {
-                    Text(
-                        text = "이동 및 체류 장소 (${places.size})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                items(places.size, key = { idx -> places[idx].id }) { idx ->
-                    val visit = places[idx]
-                    PlaceVisitTimelineItem(
-                        visit = visit,
-                        isLast = idx == places.lastIndex,
-                        stayThresholdMin = stayThresholdMin,
-                        onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
-                        onSaveAlias = { v -> aliasTargetVisit = v },
-                        onClassifyWithAi = onClassifyPlaceWithAi,
-                    )
-                }
-            }
-
-            // 6. 그날의 사진 스트립
-            if ((activeFilter == DaySectionFilter.ALL || activeFilter == DaySectionFilter.PHOTO) && photos.isNotEmpty()) {
-                item(key = "photos_header") {
-                    Text(
-                        text = "촬영 · 저장 사진 (${photos.size})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                item(key = "photos_strip") {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        itemsIndexed(photos, key = { _, p -> p.uri }) { idx, photo ->
-                            Column(
-                                modifier = Modifier
-                                    .width(106.dp)
-                                    .clickable { onPhotoClick(photos, idx) },
-                            ) {
-                                DaylogPhotoImage(
-                                    uri = photo.uri,
-                                    maxDim = 360,
-                                    modifier = Modifier
-                                        .size(106.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)),
-                                )
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(
-                                    text = DateUtils.formatTimeHm(photo.dateTakenMs),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                val locLabel = listOf(photo.cityName, photo.placeLabel)
-                                    .filter { it.isNotBlank() }
-                                    .distinct()
-                                    .joinToString(" · ")
-                                if (locLabel.isNotBlank()) {
-                                    Text(
-                                        text = locLabel,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 7. 시간순 활동 내역 (결제 · 통화 · 문자 · SNS · 메모)
-            if (filteredActivities.isNotEmpty()) {
-                item(key = "activities_header") {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
-                    Text(
-                        text = "활동 내역 (${filteredActivities.size})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                items(filteredActivities, key = { it.id }) { item ->
-                    ActivityLogRow(
-                        item = item,
-                        isAiBusy = isAiBusy,
-                        onSummarizeCall = onSummarizeCall,
-                        onDelete = if (item.type == ActivityType.NOTE) {
-                            { onDeleteNote(selectedDateKey, item.id) }
-                        } else {
-                            null
-                        },
-                    )
-                }
+        item(key = "bottom_quick_note_add") {
+            OutlinedButton(
+                onClick = { showAddNoteDialog = true },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("간단 메모 추가", style = MaterialTheme.typography.labelMedium)
             }
         }
 
