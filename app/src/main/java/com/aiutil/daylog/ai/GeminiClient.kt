@@ -197,16 +197,18 @@ class GeminiClient {
             .joinToString("\n") { "- ${DateUtils.formatTimeHm(it.timestampMs)} [${it.type.label}] ${it.title}: ${it.detail}" }
 
         val prompt = """
-            아래 방문 장소의 좌표, 주소, 체류 시간, 같은 시간대 활동/결제 내역을 바탕으로 가장 가능성 높은 장소 카테고리와 추정 상호명을 알려줘.
+            아래 방문 장소의 GPS 좌표, 주소, 체류 시간, 같은 시간대 활동/결제 내역을 바탕으로 가장 가능성 높은 장소 카테고리와 실제 상호명(또는 시설/캠핑장/건물명)을 알려줘.
+            구글 검색을 활용해 해당 위도·경도 좌표 반경 200m 이내에 있는 실제 상호나 시설명을 우선 찾고, 진천군·백곡면 같은 단순 행정구역명은 poi에 적지 마.
 
             카테고리 코드 (반드시 이 중 하나만 선택):
             RESTAURANT(식당), CAFE(카페), HOSPITAL(병원), WORK(업무), HOME(집), SHOPPING(쇼핑), TRANSIT(이동), OUTDOOR(야외), GENERAL(기타)
 
-            반드시 JSON 객체로만 답해: {"category":"CAFE","poi":"추정 상호 또는 건물명"}
+            반드시 아래 JSON 객체 한 줄만 출력해:
+            {"category":"OUTDOOR","poi":"실제 상호 또는 시설명"}
 
             방문 정보:
             - 도시: ${visit.cityName}
-            - 장소명: ${visit.placeName}
+            - 기존 장소명: ${visit.placeName}
             - 주소: ${visit.address}
             - 좌표: ${visit.latitude}, ${visit.longitude}
             - 체류: ${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} (${visit.durationMinutes}분)
@@ -214,9 +216,28 @@ class GeminiClient {
             ${nearbyActs.ifBlank { "없음" }}
         """.trimIndent()
 
-        val bodyJson = buildTextRequestBody(prompt, temperature = 0.1, jsonMime = true)
-        val raw = callGeminiGenerateContent(bodyJson, cleanKey) ?: return@withContext null
-        parsePlaceClassificationResponse(raw)
+        // 1차: Google Search Grounding으로 실제 좌표 주변 상호명 검색 (responseMimeType 미사용 필수)
+        val groundedBody = buildTextRequestBody(
+            prompt = prompt,
+            temperature = 0.1,
+            jsonMime = false,
+            useGoogleSearch = true,
+        )
+        val groundedRaw = callGeminiGenerateContent(groundedBody, cleanKey)
+        val groundedParsed = groundedRaw?.let { parsePlaceClassificationResponse(it) }
+        if (groundedParsed != null && groundedParsed.second.isNotBlank()) {
+            return@withContext groundedParsed
+        }
+
+        // 2차 폴백: 일반 JSON 응답 모드
+        val fallbackBody = buildTextRequestBody(
+            prompt = prompt,
+            temperature = 0.1,
+            jsonMime = true,
+            useGoogleSearch = false,
+        )
+        val fallbackRaw = callGeminiGenerateContent(fallbackBody, cleanKey) ?: return@withContext groundedParsed
+        parsePlaceClassificationResponse(fallbackRaw) ?: groundedParsed
     }
 
     /**
@@ -276,6 +297,7 @@ class GeminiClient {
         prompt: String,
         temperature: Double,
         jsonMime: Boolean,
+        useGoogleSearch: Boolean = false,
     ): String {
         return buildJsonObject {
             put("contents", buildJsonArray {
@@ -286,8 +308,15 @@ class GeminiClient {
                     })
                 })
             })
+            if (useGoogleSearch) {
+                put("tools", buildJsonArray {
+                    add(buildJsonObject {
+                        put("google_search", buildJsonObject {})
+                    })
+                })
+            }
             put("generationConfig", buildJsonObject {
-                if (jsonMime) {
+                if (jsonMime && !useGoogleSearch) {
                     put("responseMimeType", "application/json")
                 }
                 put("temperature", temperature)
@@ -325,7 +354,9 @@ class GeminiClient {
             val first = candidates.firstOrNull() as? JsonObject ?: return null
             val content = first["content"] as? JsonObject ?: return null
             val parts = content["parts"] as? JsonArray ?: return null
-            parts.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.content
+            parts.mapNotNull { part ->
+                (part as? JsonObject)?.get("text")?.jsonPrimitive?.content
+            }.joinToString("\n").takeIf { it.isNotBlank() }
         }.getOrNull()
     }
 

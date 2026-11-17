@@ -57,7 +57,9 @@ object PlaceClassifier {
     )
 
     private val outdoorKeywords = listOf(
-        "공원", "산", "해변", "해수욕장", "바다", "호수", "수목원", "캠핑", "둘레길", "park", "beach",
+        "공원", "산", "해변", "해수욕장", "바다", "호수", "수목원", "캠핑", "캠핑장",
+        "오토캠핑", "야영장", "글램핑", "카라반", "휴양림", "둘레길", "유원지", "낚시터",
+        "park", "beach", "camp", "camping", "camp_site",
     )
 
     fun classify(
@@ -146,7 +148,7 @@ object PlaceClassifier {
             h.contains("office") || h.contains("company") || h.contains("industrial") || h.contains("commercial") -> PlaceCategory.WORK
             h.contains("supermarket") || h.contains("convenience") || h.contains("mall") || h.contains("department_store") -> PlaceCategory.SHOPPING
             h.contains("station") || h.contains("bus_stop") || h.contains("airport") -> PlaceCategory.TRANSIT
-            h.contains("park") || h.contains("beach") || h.contains("viewpoint") -> PlaceCategory.OUTDOOR
+            h.contains("park") || h.contains("beach") || h.contains("viewpoint") || h.contains("camp_site") || h.contains("caravan_site") || h.contains("picnic_site") || h.contains("resort") -> PlaceCategory.OUTDOOR
             else -> PlaceCategory.GENERAL
         }
     }

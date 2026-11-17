@@ -188,12 +188,33 @@ class PhoneDataCollector(
 
             val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(key, photos, aliases)
             val gpsVisits = gpsMap[key].orEmpty()
+            val prevPlaces = current?.places.orEmpty()
             val mergedPlaces: List<PlaceVisit> = PlaceVisitEngine.mergeDayPlaces(
                 gpsVisits = gpsVisits,
                 photoVisits = photoVisits,
                 aliases = aliases,
                 nearbyActivities = mergedActivities,
-            )
+            ).map { visit ->
+                // 재스캔 시에도 기존에 저장된 AI/수동 장소 분류와 상호명을 보존 (새로 찾은 상호가 있으면 우선)
+                if (visit.nearbyPoi.isNotBlank()) {
+                    visit
+                } else {
+                    val matchedPrev = prevPlaces.firstOrNull { prev ->
+                        prev.nearbyPoi.isNotBlank() &&
+                            (prev.id == visit.id || PlaceVisitEngine.distanceMeters(
+                                prev.latitude, prev.longitude, visit.latitude, visit.longitude
+                            ) <= 150.0)
+                    }
+                    if (matchedPrev != null) {
+                        visit.copy(
+                            nearbyPoi = matchedPrev.nearbyPoi,
+                            category = if (visit.category == com.aiutil.daylog.model.PlaceCategory.GENERAL) matchedPrev.category else visit.category,
+                        )
+                    } else {
+                        visit
+                    }
+                }
+            }
 
             DayRecord(
                 dateKey = key,
@@ -280,6 +301,9 @@ class PhoneDataCollector(
                     var lng: Double? = null
                     var cityName = ""
                     var placeLabel = ""
+                    var nearbyPoi = ""
+                    var osmCategoryHint = ""
+                    var address = ""
 
                     if (canReadExifLocation && !isShot && exifAnalyzedCount < MAX_EXIF_READ_PER_SCAN) {
                         val latLng = extractExifLatLong(uri)
@@ -290,6 +314,9 @@ class PhoneDataCollector(
                             val geo = geocoder.reverseGeocode(lat, lng)
                             cityName = geo.cityName
                             placeLabel = geo.placeName
+                            nearbyPoi = geo.nearbyPoi
+                            osmCategoryHint = geo.osmCategoryHint
+                            address = geo.address
                         }
                     }
 
@@ -307,6 +334,9 @@ class PhoneDataCollector(
                             longitude = lng,
                             cityName = cityName,
                             placeLabel = placeLabel,
+                            nearbyPoi = nearbyPoi,
+                            osmCategoryHint = osmCategoryHint,
+                            address = address,
                         )
                     )
                 }

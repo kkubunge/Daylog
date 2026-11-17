@@ -50,11 +50,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aiutil.daylog.collector.CallSummaryHelper
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
-import com.aiutil.daylog.ui.components.CallSummaryCard
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.PlaceVisit
@@ -103,7 +101,6 @@ fun DayDetailSheet(
     val callCount = current.activities.count { it.type == ActivityType.CALL }
     val smsCount = current.activities.count { it.type == ActivityType.SMS }
     val snsCount = current.activities.count { it.type == ActivityType.SNS }
-    val callSummary = remember(current.activities) { CallSummaryHelper.summarizeCalls(current.activities) }
     val photoRows = remember(current.photos) { current.photos.chunked(3) }
 
     ModalBottomSheet(
@@ -282,11 +279,6 @@ fun DayDetailSheet(
                     }
                 }
             } else {
-                if (callSummary != null) {
-                    item(key = "detail_call_summary") {
-                        CallSummaryCard(summary = callSummary)
-                    }
-                }
                 items(current.activities, key = { "da_${it.id}" }) { item ->
                     ActivityLogRow(
                         item = item,

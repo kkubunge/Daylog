@@ -9,8 +9,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
@@ -20,7 +23,7 @@ import kotlin.coroutines.resume
 
 /**
  * 위도/경도 좌표를 한국어 도시명·장소명·주소·주변 상호(POI)로 변환하는 역지오코딩 도우미.
- * Android Geocoder와 OpenStreetMap Nominatim을 조합하고 좌표 캐시를 사용한다.
+ * Android Geocoder + OpenStreetMap Overpass 반경 180m POI 검색 + Nominatim을 결합한다.
  */
 class GeocodingHelper(private val context: Context) {
 
@@ -35,9 +38,13 @@ class GeocodingHelper(private val context: Context) {
     private val cache = ConcurrentHashMap<String, GeoLabel>()
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(3, TimeUnit.SECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
         .build()
+
+    fun clearCache() {
+        cache.clear()
+    }
 
     suspend fun reverseGeocode(latitude: Double, longitude: Double): GeoLabel {
         val key = String.format(Locale.US, "%.4f,%.4f", latitude, longitude)
@@ -61,28 +68,114 @@ class GeocodingHelper(private val context: Context) {
             )
         }
 
-        // 2. OpenStreetMap Nominatim으로 주변 건물/상호(POI) 및 도시명 보강
-        val osmInfo = withTimeoutOrNull(2500L) {
-            fetchOsmNominatim(latitude, longitude)
+        // 2. Overpass API로 반경 180m 이내 실제 상호·시설(POI) 검색
+        val overpassPoi = withTimeoutOrNull(3500L) {
+            fetchNearestOverpassPoi(latitude, longitude)
         }
 
-        val mergedCity = base.cityName.ifBlank { osmInfo?.cityName.orEmpty() }
-        val mergedPoi = osmInfo?.nearbyPoi?.takeIf { it.isNotBlank() } ?: base.nearbyPoi
+        // 3. Overpass에서 못 찾은 경우 Nominatim reverse 보조 조회
+        val osmReverse = if (overpassPoi == null) {
+            withTimeoutOrNull(2500L) { fetchOsmNominatim(latitude, longitude) }
+        } else {
+            null
+        }
+
+        val mergedCity = base.cityName.ifBlank { osmReverse?.cityName.orEmpty() }
+        val mergedPoi = overpassPoi?.name?.takeIf { it.isNotBlank() }
+            ?: osmReverse?.nearbyPoi?.takeIf { it.isNotBlank() }
+            ?: base.nearbyPoi
+        val mergedCategoryHint = overpassPoi?.categoryHint?.takeIf { it.isNotBlank() }
+            ?: osmReverse?.categoryHint.orEmpty()
+
         val mergedPlaceName = when {
-            mergedPoi.isNotBlank() && base.placeName.isNotBlank() && !base.placeName.contains(mergedPoi) ->
-                mergedPoi
-            else -> base.placeName.ifBlank { osmInfo?.displayName.orEmpty() }
+            mergedPoi.isNotBlank() -> mergedPoi
+            base.placeName.isNotBlank() -> base.placeName
+            else -> osmReverse?.displayName.orEmpty()
         }.ifBlank { GeoUtils.formatCoordFallback(latitude, longitude) }
 
         val merged = GeoLabel(
             cityName = mergedCity,
             placeName = mergedPlaceName,
             nearbyPoi = mergedPoi,
-            osmCategoryHint = osmInfo?.categoryHint.orEmpty(),
-            address = base.address.ifBlank { osmInfo?.displayName.orEmpty() },
+            osmCategoryHint = mergedCategoryHint,
+            address = base.address.ifBlank { osmReverse?.displayName.orEmpty() },
         )
         cache[key] = merged
         return merged
+    }
+
+    private data class PoiCandidate(
+        val name: String,
+        val categoryHint: String,
+        val distanceMeters: Double,
+        val priority: Int,
+    )
+
+    private suspend fun fetchNearestOverpassPoi(latitude: Double, longitude: Double): PoiCandidate? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val query = String.format(
+                    Locale.US,
+                    "[out:json][timeout:4];(node(around:180,%.6f,%.6f)[\"name\"];way(around:180,%.6f,%.6f)[\"name\"];);out center 20;",
+                    latitude,
+                    longitude,
+                    latitude,
+                    longitude,
+                )
+                val body = FormBody.Builder().add("data", query).build()
+                val request = Request.Builder()
+                    .url("https://overpass-api.de/api/interpreter")
+                    .header("User-Agent", "DaylogAndroidApp/2.0 (personal-lifelog)")
+                    .post(body)
+                    .build()
+                httpClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    val raw = resp.body?.string() ?: return@use null
+                    parseNearestOverpassPoi(raw, latitude, longitude)
+                }
+            }.getOrNull()
+        }
+
+    private fun parseNearestOverpassPoi(rawJson: String, lat: Double, lng: Double): PoiCandidate? {
+        return runCatching {
+            val root = json.parseToJsonElement(rawJson).jsonObject
+            val elements = root["elements"]?.jsonArray ?: return null
+            val poiTagKeys = listOf("amenity", "tourism", "shop", "leisure", "office", "healthcare", "craft", "building")
+
+            elements.mapNotNull { el ->
+                val obj = el.jsonObject
+                val tags = obj["tags"]?.jsonObject ?: return@mapNotNull null
+                val name = tags["name:ko"]?.jsonPrimitive?.content?.trim()
+                    ?: tags["name"]?.jsonPrimitive?.content?.trim()
+                    ?: return@mapNotNull null
+                if (name.isBlank()) return@mapNotNull null
+
+                // 단순 도로명이나 행정 경계는 제외하고 실제 시설/상호를 우선 선택
+                val matchedHint = poiTagKeys.firstNotNullOfOrNull { key ->
+                    val v = tags[key]?.jsonPrimitive?.content?.trim()
+                    if (!v.isNullOrBlank() && v != "yes") "$key:$v" else null
+                } ?: if (tags.containsKey("building") || tags.containsKey("landuse")) {
+                    "building:yes"
+                } else {
+                    return@mapNotNull null
+                }
+
+                val eLat = obj["lat"]?.jsonPrimitive?.doubleOrNull
+                    ?: obj["center"]?.jsonObject?.get("lat")?.jsonPrimitive?.doubleOrNull
+                    ?: return@mapNotNull null
+                val eLng = obj["lon"]?.jsonPrimitive?.doubleOrNull
+                    ?: obj["center"]?.jsonObject?.get("lon")?.jsonPrimitive?.doubleOrNull
+                    ?: return@mapNotNull null
+
+                val dist = GeoUtils.distanceMeters(lat, lng, eLat, eLng)
+                val priority = when {
+                    tags.containsKey("tourism") || tags.containsKey("amenity") || tags.containsKey("shop") || tags.containsKey("leisure") || tags.containsKey("healthcare") -> 1
+                    tags.containsKey("office") -> 2
+                    else -> 3
+                }
+                PoiCandidate(name = name, categoryHint = matchedHint, distanceMeters = dist, priority = priority)
+            }.minWithOrNull(compareBy<PoiCandidate> { it.priority }.thenBy { it.distanceMeters })
+        }.getOrNull()
     }
 
     private data class OsmInfo(
@@ -120,9 +213,11 @@ class GeocodingHelper(private val context: Context) {
                         .firstNotNullOfOrNull { k -> addrObj?.get(k)?.jsonPrimitive?.content?.trim()?.takeIf(String::isNotBlank) }
                         .orEmpty()
 
+                    // 도로/행정구역 자체 이름은 상호명(POI)으로 오인하지 않도록 제외
+                    val isRoadOrAdmin = category in setOf("highway", "boundary", "place")
                     OsmInfo(
                         cityName = simplifyCityName(city),
-                        nearbyPoi = name,
+                        nearbyPoi = if (isRoadOrAdmin) "" else name,
                         categoryHint = "$category:$type",
                         displayName = displayName,
                     )
@@ -177,12 +272,12 @@ class GeocodingHelper(private val context: Context) {
             else -> GeoUtils.formatCoordFallback(lat, lng)
         }
 
-        // 도로명 숫자만 있는 featureName은 상호로 취급하지 않음
-        val featurePoi = if (feature.isNotBlank() && !feature.all { it.isDigit() || it == '-' }) {
-            feature
-        } else {
-            ""
-        }
+        val isFeatureJustAdminOrNumber = feature.isBlank() ||
+            feature.all { it.isDigit() || it == '-' } ||
+            feature == locality ||
+            feature == dong ||
+            feature == admin
+        val featurePoi = if (!isFeatureJustAdminOrNumber) feature else ""
 
         return GeoLabel(
             cityName = city,

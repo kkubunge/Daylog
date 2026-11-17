@@ -107,8 +107,16 @@ object SmsSpamFilter {
             else -> "결제"
         }
 
+        val merchant = extractMerchantFromBody(cleaned)
+        val isSenderPhoneDigits = senderLabel.all { it.isDigit() || it == '-' }
+        val displayLabel = when {
+            merchant.isNotBlank() -> merchant
+            !isSenderPhoneDigits && senderLabel.isNotBlank() -> senderLabel
+            else -> kind
+        }
+
         val title = buildString {
-            append(senderLabel.ifBlank { kind })
+            append(displayLabel)
             if (amountText.isNotBlank()) {
                 append(" · ")
                 append(amountText)
@@ -119,6 +127,16 @@ object SmsSpamFilter {
             detail = cleaned,
             amountWon = if (kind == "입금" || kind == "결제취소") 0L else amount,
         )
+    }
+
+    private fun extractMerchantFromBody(cleaned: String): String {
+        // 예: "바이탈에어코(으)로 17,800원 결제가...", "스타벅스코리아에서 4,500원 결제"
+        val pattern = Regex("([가-힣A-Za-z0-9_()&.]{2,24}?)(?:\\(으\\)로|에서)\\s*[0-9,]+\\s*원")
+        val match = pattern.find(cleaned)
+        if (match != null) {
+            return match.groupValues[1].trim()
+        }
+        return ""
     }
 
     fun extractPrimaryWonAmount(text: String): Long {

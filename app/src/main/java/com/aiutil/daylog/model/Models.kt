@@ -94,6 +94,9 @@ data class DayPhoto(
     val longitude: Double? = null,
     val cityName: String = "",
     val placeLabel: String = "",
+    val nearbyPoi: String = "",
+    val osmCategoryHint: String = "",
+    val address: String = "",
     val aiCaption: String = "",
 )
 

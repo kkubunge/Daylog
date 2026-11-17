@@ -17,7 +17,7 @@ object PlaceVisitEngine {
 
     private const val DEFAULT_STAY_RADIUS_M = 150.0
     private const val PHOTO_CLUSTER_RADIUS_M = 180.0
-    private const val PHOTO_CLUSTER_GAP_MS = 60L * 60L * 1000L
+    private const val PHOTO_SAME_SPOT_GAP_MS = 240L * 60L * 1000L
     private const val OVERLAP_TIME_MS = 30L * 60L * 1000L
     private const val OVERLAP_RADIUS_M = 250.0
 
@@ -147,7 +147,7 @@ object PlaceVisitEngine {
             val anchor = currentCluster.last()
             val dist = GeoUtils.distanceMeters(anchor.latitude!!, anchor.longitude!!, lat, lng)
             val gap = abs(photo.dateTakenMs - anchor.dateTakenMs)
-            if (dist <= PHOTO_CLUSTER_RADIUS_M && gap <= PHOTO_CLUSTER_GAP_MS) {
+            if (dist <= PHOTO_CLUSTER_RADIUS_M && gap <= PHOTO_SAME_SPOT_GAP_MS) {
                 currentCluster.add(photo)
             } else {
                 clusters.add(mutableListOf(photo))
@@ -162,7 +162,12 @@ object PlaceVisitEngine {
             val lng = first.longitude!!
             val alias = resolveAlias(lat, lng, aliases)
             val city = cluster.firstNotNullOfOrNull { it.cityName.takeIf(String::isNotBlank) }.orEmpty()
+            val photoPoi = cluster.firstNotNullOfOrNull { it.nearbyPoi.takeIf(String::isNotBlank) }.orEmpty()
+            val osmHint = cluster.firstNotNullOfOrNull { it.osmCategoryHint.takeIf(String::isNotBlank) }.orEmpty()
+            val addr = cluster.firstNotNullOfOrNull { it.address.takeIf(String::isNotBlank) }
+                ?: first.placeLabel
             val label = alias?.name
+                ?: photoPoi.takeIf { it.isNotBlank() }
                 ?: cluster.firstNotNullOfOrNull { it.placeLabel.takeIf(String::isNotBlank) }
                 ?: GeoUtils.formatCoordFallback(lat, lng)
 
@@ -175,8 +180,9 @@ object PlaceVisitEngine {
 
             val classified = PlaceClassifier.classify(
                 placeName = label,
-                address = first.placeLabel,
-                nearbyPoi = if (alias == null) first.placeLabel else "",
+                address = addr,
+                nearbyPoi = if (alias == null) photoPoi else "",
+                osmCategoryHint = osmHint,
                 startMs = first.dateTakenMs,
                 endMs = last.dateTakenMs,
             )
@@ -193,7 +199,7 @@ object PlaceVisitEngine {
                     placeName = label,
                     nearbyPoi = classified.nearbyPoi,
                     category = classified.category,
-                    address = first.placeLabel,
+                    address = addr,
                     source = PlaceSource.PHOTO_EXIF,
                     distanceFromPrevMeters = distFromPrev,
                     sampleCount = cluster.size,

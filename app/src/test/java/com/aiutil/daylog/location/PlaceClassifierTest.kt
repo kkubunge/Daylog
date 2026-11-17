@@ -47,6 +47,14 @@ class PlaceClassifierTest {
             nearbyPoi = "연구동",
         )
         assertEquals(PlaceCategory.WORK, workRes.category)
+
+        val campRes = PlaceClassifier.classify(
+            placeName = "진천군 백곡면",
+            nearbyPoi = "백곡캠핑장",
+            osmCategoryHint = "tourism:camp_site",
+        )
+        assertEquals(PlaceCategory.OUTDOOR, campRes.category)
+        assertEquals("백곡캠핑장", campRes.nearbyPoi)
     }
 
     @Test

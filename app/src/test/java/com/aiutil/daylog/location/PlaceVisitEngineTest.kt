@@ -103,4 +103,41 @@ class PlaceVisitEngineTest {
         assertEquals(1, merged.size)
         assertEquals(PlaceSource.GPS_TRACKER, merged[0].source)
     }
+
+    @Test
+    fun `가까운 거리에서 62분 간격으로 촬영된 사진들은 하나의 장소 체류로 통합되고 주변 상호명을 유지한다`() {
+        val dateKey = "2026-11-17"
+        val t0 = 1_794_880_000_000L
+        val photos = listOf(
+            DayPhoto(
+                uri = "content://media/camp1",
+                displayName = "camp1.jpg",
+                folderName = "Camera",
+                dateTakenMs = t0,
+                latitude = 36.88500,
+                longitude = 127.35000,
+                cityName = "진천군",
+                placeLabel = "진천군 백곡면",
+                nearbyPoi = "백곡캠핑장",
+                osmCategoryHint = "tourism:camp_site",
+            ),
+            DayPhoto(
+                uri = "content://media/camp2",
+                displayName = "camp2.jpg",
+                folderName = "Camera",
+                dateTakenMs = t0 + 62 * 60_000L,
+                latitude = 36.88512,
+                longitude = 127.35012,
+                cityName = "진천군",
+                placeLabel = "진천군 백곡면",
+                nearbyPoi = "백곡캠핑장",
+                osmCategoryHint = "tourism:camp_site",
+            ),
+        )
+
+        val visits = PlaceVisitEngine.buildPlacesFromPhotos(dateKey, photos)
+        assertEquals(1, visits.size)
+        assertEquals("백곡캠핑장", visits[0].nearbyPoi)
+        assertEquals(62L, visits[0].durationMinutes)
+    }
 }

@@ -23,6 +23,11 @@ class SmsSpamFilterTest {
         val parsed = SmsSpamFilter.parsePaymentDetail("신한카드", payMsg)
         assertEquals(12500L, parsed.amountWon)
         assertTrue(parsed.title.contains("12,500원"))
+
+        val merchantPayMsg = "바이탈에어코(으)로 17,800원 결제가 완료되었습니다. 업체연락처: 02-..."
+        val parsedMerchant = SmsSpamFilter.parsePaymentDetail("15445163", merchantPayMsg)
+        assertEquals(17800L, parsedMerchant.amountWon)
+        assertEquals("바이탈에어코 · 17,800원", parsedMerchant.title)
     }
 
     @Test

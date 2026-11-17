@@ -62,11 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aiutil.daylog.collector.CallSummaryHelper
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
-import com.aiutil.daylog.ui.components.CallSummaryCard
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.PermissionStatus
@@ -133,8 +131,6 @@ fun CalendarScreen(
     val callCount = activities.count { it.type == ActivityType.CALL }
     val smsCount = activities.count { it.type == ActivityType.SMS }
     val snsCount = activities.count { it.type == ActivityType.SNS }
-
-    val callSummary = remember(activities) { CallSummaryHelper.summarizeCalls(activities) }
 
     val filteredActivities = remember(activities, activeFilter) {
         when (activeFilter) {
@@ -618,19 +614,10 @@ fun CalendarScreen(
                 }
             }
 
-            // 7. 통화 요약 & 시간순 활동 내역 (결제 · 통화 · 문자 · SNS · 메모)
-            if (callSummary != null && (activeFilter == DaySectionFilter.ALL || activeFilter == DaySectionFilter.CALL)) {
-                item(key = "call_summary_card") {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
-                    CallSummaryCard(summary = callSummary)
-                }
-            }
-
+            // 7. 시간순 활동 내역 (결제 · 통화 · 문자 · SNS · 메모)
             if (filteredActivities.isNotEmpty()) {
                 item(key = "activities_header") {
-                    if (callSummary == null || (activeFilter != DaySectionFilter.ALL && activeFilter != DaySectionFilter.CALL)) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
-                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
                     Text(
                         text = "활동 내역 (${filteredActivities.size})",
                         style = MaterialTheme.typography.labelLarge,

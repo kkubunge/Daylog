@@ -136,6 +136,9 @@ fun AppRoot(
         scope.launch {
             isScanning = true
             try {
+                if (showToast) {
+                    App.geocoder.clearCache()
+                }
                 val existing = App.daylogs.getRecord(dateKey)
                 val updated = App.collector.collectDate(dateKey, existing, settings)
                 App.daylogs.upsertRecord(updated)
@@ -144,6 +147,25 @@ fun AppRoot(
                     snackbarHostState.showSnackbar(
                         "${DateUtils.formatShortKoreanDate(dateKey)} 조회 완료 (장소 ${updated.places.size} · 사진 ${updated.photos.size} · 활동 ${updated.activities.size})"
                     )
+                }
+
+                // Gemini API 키가 있고 상호명이 비어 있는 장소가 있으면 자동으로 검색·추정해 채움
+                if (hasGeminiKey) {
+                    val missingPoiVisits = updated.places.filter { it.nearbyPoi.isBlank() }.take(4)
+                    if (missingPoiVisits.isNotEmpty()) {
+                        scope.launch {
+                            for (visit in missingPoiVisits) {
+                                val res = App.gemini.inferPlaceCategoryAndPoi(
+                                    visit = visit,
+                                    activities = updated.activities,
+                                    apiKey = settings.geminiApiKey,
+                                )
+                                if (res != null && (res.second.isNotBlank() || res.first != visit.category)) {
+                                    App.daylogs.updatePlaceClassification(dateKey, visit.id, res.first, res.second)
+                                }
+                            }
+                        }
+                    }
                 }
             } finally {
                 isScanning = false

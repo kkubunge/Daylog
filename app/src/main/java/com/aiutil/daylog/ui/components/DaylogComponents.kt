@@ -70,7 +70,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.aiutil.daylog.collector.CallSummaryHelper
 import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
@@ -493,80 +492,6 @@ fun PlaceVisitTimelineItem(
                     .height(6.dp)
                     .background(MaterialTheme.colorScheme.outline),
             )
-        }
-    }
-}
-
-/**
- * 하루 통화 내역(총 횟수·총 통화시간·상대방별 묶음)을 한눈에 정리해 보여주는 모노톤 요약 카드.
- */
-@Composable
-fun CallSummaryCard(
-    summary: CallSummaryHelper.DayCallSummary,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Call,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(15.dp),
-                )
-                Text(
-                    text = "통화 요약",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = CallSummaryHelper.formatSummaryHeadline(summary),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            summary.groups.take(5).forEach { group ->
-                val countInfo = buildList {
-                    add("${group.count}회")
-                    if (group.totalSec > 0L) add(DateUtils.formatDurationKorean(group.totalSec))
-                    if (group.missedCount > 0 && group.totalSec == 0L) add("부재중 ${group.missedCount}")
-                    if (group.hasRecording) add("녹음")
-                }.joinToString(" · ")
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = group.title,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = countInfo,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
         }
     }
 }
