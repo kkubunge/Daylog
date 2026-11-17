@@ -58,6 +58,7 @@ import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.ui.calendar.QuickNoteAddDialog
 import com.aiutil.daylog.ui.calendar.SavePlaceAliasDialog
@@ -84,7 +85,8 @@ fun DayDetailSheet(
     onSaveQuickNote: (String) -> Unit,
     onAddActivityNote: (title: String, detail: String) -> Unit,
     onDeleteActivity: (activityId: String) -> Unit,
-    onSavePlaceAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onSavePlaceAlias: (name: String, radiusMeters: Int, visit: PlaceVisit) -> Unit,
+    onOverridePlaceVisit: (visit: PlaceVisit, newName: String, newPoi: String, newCategory: PlaceCategory) -> Unit,
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onSummarizeCall: (ActivityItem) -> Unit,
     onDeleteRecord: () -> Unit,
@@ -430,11 +432,19 @@ fun DayDetailSheet(
     val targetVisit = aliasTargetVisit
     if (targetVisit != null) {
         SavePlaceAliasDialog(
-            initialName = targetVisit.placeName,
-            address = targetVisit.address,
+            visit = targetVisit,
             onDismiss = { aliasTargetVisit = null },
-            onSave = { aliasName ->
-                onSavePlaceAlias(aliasName, targetVisit)
+            onSaveAlias = { aliasName, radiusMeters ->
+                onSavePlaceAlias(aliasName, radiusMeters, targetVisit)
+                aliasTargetVisit = null
+            },
+            onOverrideVisit = { newName, clearPoi, newCategory ->
+                onOverridePlaceVisit(
+                    targetVisit,
+                    newName,
+                    if (clearPoi) "" else targetVisit.nearbyPoi,
+                    newCategory,
+                )
                 aliasTargetVisit = null
             },
         )

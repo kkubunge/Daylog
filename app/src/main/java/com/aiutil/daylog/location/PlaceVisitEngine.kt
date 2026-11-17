@@ -26,9 +26,28 @@ object PlaceVisitEngine {
         longitude: Double,
         aliases: List<SavedPlaceAlias>,
     ): SavedPlaceAlias? {
-        return aliases.firstOrNull { alias ->
-            GeoUtils.distanceMeters(latitude, longitude, alias.latitude, alias.longitude) <= alias.radiusMeters
-        }
+        return aliases
+            .mapNotNull { alias ->
+                val dist = GeoUtils.distanceMeters(latitude, longitude, alias.latitude, alias.longitude)
+                if (dist <= alias.radiusMeters) dist to alias else null
+            }
+            .minByOrNull { it.first }
+            ?.second
+    }
+
+    /**
+     * 주소 문자열에서 시·구·동(읍·면) 수준 또는 안전한 기본 표기명을 추출한다.
+     * 상가 오탐을 억제했을 때 주소 기반 기본 장소명으로 폴백하기 위함이다.
+     */
+    internal fun cleanAddressFallback(address: String, cityName: String, currentName: String): String {
+        val cleaned = address
+            .replace("대한민국", "")
+            .trim()
+        if (cleaned.isBlank()) return cityName.ifBlank { currentName }
+        val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
+        // 시/군 + 구/읍/면/동 앞 2~3토큰으로 간결하게 정리
+        val short = tokens.take(3).joinToString(" ")
+        return short.ifBlank { cityName.ifBlank { currentName } }
     }
 
     /**
@@ -54,30 +73,60 @@ object PlaceVisitEngine {
         val matchedAlias = resolveAlias(latitude, longitude, aliases)
         val resolvedName = matchedAlias?.name
             ?: placeName.ifBlank { address.ifBlank { GeoUtils.formatCoordFallback(latitude, longitude) } }
+        val effectivePoi = if (matchedAlias != null) "" else nearbyPoi
 
         val last = sorted.lastOrNull()
         if (last != null && source == PlaceSource.GPS_TRACKER && last.source == PlaceSource.GPS_TRACKER) {
             val dist = GeoUtils.distanceMeters(last.latitude, last.longitude, latitude, longitude)
             if (dist <= stayRadiusMeters) {
-                val mergedName = matchedAlias?.name ?: last.placeName.ifBlank { resolvedName }
-                val mergedAddress = last.address.ifBlank { address }
-                val mergedCity = last.cityName.ifBlank { cityName }
-                val mergedPoi = last.nearbyPoi.ifBlank { nearbyPoi }
                 val updatedEnd = maxOf(last.endMs, timestampMs)
+                // 수동 편집된 장소는 이름·상호·카테고리를 덮어쓰지 않고 체류 시간만 연장한다
+                if (last.isManualOverride) {
+                    sorted[sorted.lastIndex] = last.copy(
+                        endMs = updatedEnd,
+                        sampleCount = last.sampleCount + 1,
+                    )
+                    return sorted
+                }
+
+                val mergedCity = last.cityName.ifBlank { cityName }
+                val mergedAddress = last.address.ifBlank { address }
+                val lastAlias = resolveAlias(last.latitude, last.longitude, aliases) ?: matchedAlias
+                val weight = last.sampleCount.coerceIn(1, 8)
+                val stableLat = (last.latitude * weight + latitude) / (weight + 1)
+                val stableLng = (last.longitude * weight + longitude) / (weight + 1)
+
+                val rawPoi = if (lastAlias != null) "" else last.nearbyPoi.ifBlank { effectivePoi }
+                val rawName = lastAlias?.name ?: last.placeName.ifBlank { resolvedName }
                 val classified = PlaceClassifier.classify(
-                    placeName = mergedName,
+                    placeName = rawName,
                     address = mergedAddress,
-                    nearbyPoi = mergedPoi,
-                    osmCategoryHint = osmCategoryHint,
+                    nearbyPoi = rawPoi,
+                    osmCategoryHint = if (lastAlias != null) "" else osmCategoryHint,
                     startMs = last.startMs,
                     endMs = updatedEnd,
                 )
+
+                val finalPoi = if (lastAlias != null) "" else classified.nearbyPoi
+                val finalName = when {
+                    lastAlias != null -> lastAlias.name
+                    finalPoi.isBlank() && rawPoi.isNotBlank() && rawName == rawPoi ->
+                        cleanAddressFallback(mergedAddress, mergedCity, rawName)
+                    else -> rawName
+                }
+
                 val updatedLast = last.copy(
                     endMs = updatedEnd,
+                    latitude = stableLat,
+                    longitude = stableLng,
                     cityName = mergedCity,
-                    placeName = mergedName,
-                    nearbyPoi = classified.nearbyPoi,
-                    category = if (last.category != PlaceCategory.GENERAL) last.category else classified.category,
+                    placeName = finalName,
+                    nearbyPoi = finalPoi,
+                    category = if (lastAlias != null || last.category == PlaceCategory.GENERAL || finalPoi.isBlank() && rawPoi.isNotBlank()) {
+                        classified.category
+                    } else {
+                        last.category
+                    },
                     address = mergedAddress,
                     sampleCount = last.sampleCount + 1,
                 )
@@ -95,11 +144,17 @@ object PlaceVisitEngine {
         val classified = PlaceClassifier.classify(
             placeName = resolvedName,
             address = address,
-            nearbyPoi = nearbyPoi,
-            osmCategoryHint = osmCategoryHint,
+            nearbyPoi = effectivePoi,
+            osmCategoryHint = if (matchedAlias != null) "" else osmCategoryHint,
             startMs = timestampMs,
             endMs = timestampMs,
         )
+
+        val finalNewName = if (matchedAlias == null && classified.nearbyPoi.isBlank() && effectivePoi.isNotBlank() && resolvedName == effectivePoi) {
+            cleanAddressFallback(address, cityName, resolvedName)
+        } else {
+            resolvedName
+        }
 
         val newVisit = PlaceVisit(
             id = "place_${source.name}_${timestampMs}_${sorted.size}",
@@ -109,8 +164,8 @@ object PlaceVisitEngine {
             latitude = latitude,
             longitude = longitude,
             cityName = cityName,
-            placeName = resolvedName,
-            nearbyPoi = classified.nearbyPoi,
+            placeName = finalNewName,
+            nearbyPoi = if (matchedAlias != null) "" else classified.nearbyPoi,
             category = classified.category,
             address = address,
             source = source,
@@ -182,10 +237,16 @@ object PlaceVisitEngine {
                 placeName = label,
                 address = addr,
                 nearbyPoi = if (alias == null) photoPoi else "",
-                osmCategoryHint = osmHint,
+                osmCategoryHint = if (alias == null) osmHint else "",
                 startMs = first.dateTakenMs,
                 endMs = last.dateTakenMs,
             )
+
+            val finalLabel = if (alias == null && classified.nearbyPoi.isBlank() && photoPoi.isNotBlank() && label == photoPoi) {
+                cleanAddressFallback(addr, city, label)
+            } else {
+                label
+            }
 
             visits.add(
                 PlaceVisit(
@@ -196,8 +257,8 @@ object PlaceVisitEngine {
                     latitude = lat,
                     longitude = lng,
                     cityName = city,
-                    placeName = label,
-                    nearbyPoi = classified.nearbyPoi,
+                    placeName = finalLabel,
+                    nearbyPoi = if (alias != null) "" else classified.nearbyPoi,
                     category = classified.category,
                     address = addr,
                     source = PlaceSource.PHOTO_EXIF,
@@ -233,8 +294,6 @@ object PlaceVisitEngine {
 
         val sorted = combined.sortedBy { it.startMs }
         return sorted.mapIndexed { idx, visit ->
-            val alias = resolveAlias(visit.latitude, visit.longitude, aliases)
-            val resolvedName = alias?.name ?: visit.placeName
             val dist = if (idx == 0) {
                 0
             } else {
@@ -242,8 +301,23 @@ object PlaceVisitEngine {
                 GeoUtils.distanceMeters(prev.latitude, prev.longitude, visit.latitude, visit.longitude).roundToInt()
             }
 
+            if (visit.isManualOverride) {
+                return@mapIndexed visit.copy(distanceFromPrevMeters = dist)
+            }
+
+            val alias = resolveAlias(visit.latitude, visit.longitude, aliases)
+            if (alias != null) {
+                val aliasCat = PlaceClassifier.classifyByText(alias.name)
+                return@mapIndexed visit.copy(
+                    placeName = alias.name,
+                    nearbyPoi = "",
+                    category = if (aliasCat != PlaceCategory.GENERAL) aliasCat else visit.category,
+                    distanceFromPrevMeters = dist,
+                )
+            }
+
             val classified = PlaceClassifier.classify(
-                placeName = resolvedName,
+                placeName = visit.placeName,
                 address = visit.address,
                 nearbyPoi = visit.nearbyPoi,
                 startMs = visit.startMs,
@@ -251,10 +325,21 @@ object PlaceVisitEngine {
                 nearbyActivities = nearbyActivities,
             )
 
+            val suppressed = visit.nearbyPoi.isNotBlank() && classified.nearbyPoi.isBlank()
+            val resolvedName = if (suppressed && visit.placeName == visit.nearbyPoi) {
+                cleanAddressFallback(visit.address, visit.cityName, visit.placeName)
+            } else {
+                visit.placeName
+            }
+
             visit.copy(
                 placeName = resolvedName,
-                nearbyPoi = visit.nearbyPoi.ifBlank { classified.nearbyPoi },
-                category = if (visit.category != PlaceCategory.GENERAL) visit.category else classified.category,
+                nearbyPoi = classified.nearbyPoi,
+                category = when {
+                    suppressed -> classified.category
+                    classified.category != PlaceCategory.GENERAL -> classified.category
+                    else -> visit.category
+                },
                 distanceFromPrevMeters = dist,
             )
         }

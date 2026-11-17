@@ -486,7 +486,7 @@ fun PlaceVisitTimelineItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.BookmarkAdd,
-                        contentDescription = "장소 이름 저장",
+                        contentDescription = "장소 이름 수정 · 별칭 저장",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(17.dp),
                     )

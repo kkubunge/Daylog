@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -54,6 +55,7 @@ import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -88,6 +90,7 @@ fun SettingsSheet(
     onOpenNotificationListenerSettings: () -> Unit,
     onToggleTrackingService: () -> Unit,
     onCheckInNow: () -> Unit = {},
+    onUpdateAlias: (aliasId: String, name: String, radiusMeters: Int) -> Unit = { _, _, _ -> },
     onDeleteAlias: (aliasId: String) -> Unit = {},
     onBatchScanRange: (startDateKey: String, endDateKey: String) -> Unit,
     onRunScheduledScanNow: () -> Unit = {},
@@ -98,6 +101,7 @@ fun SettingsSheet(
     var showClearAllConfirm by remember { mutableStateOf(false) }
     var showRangePicker by remember { mutableStateOf(false) }
     var showCustomStayDialog by remember { mutableStateOf(false) }
+    var editingAlias by remember { mutableStateOf<SavedPlaceAlias?>(null) }
     var batchStartKey by remember(todayKey) { mutableStateOf(DateUtils.daysAgoKey(todayKey, 6)) }
     var batchEndKey by remember(todayKey) { mutableStateOf(todayKey) }
     var apiKeyDraft by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
@@ -324,6 +328,9 @@ fun SettingsSheet(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
+                                    }
+                                    IconButton(onClick = { editingAlias = alias }) {
+                                        Icon(Icons.Default.EditNote, contentDescription = "장소 이름·반경 수정", modifier = Modifier.size(19.dp))
                                     }
                                     IconButton(onClick = { onDeleteAlias(alias.id) }) {
                                         Icon(Icons.Default.DeleteOutline, contentDescription = "장소 이름 삭제", modifier = Modifier.size(18.dp))
@@ -716,6 +723,60 @@ fun SettingsSheet(
             },
             dismissButton = {
                 TextButton(onClick = { showClearAllConfirm = false }) { Text("취소") }
+            },
+        )
+    }
+
+    val targetEditAlias = editingAlias
+    if (targetEditAlias != null) {
+        var aliasNameInput by remember(targetEditAlias.id) { mutableStateOf(targetEditAlias.name) }
+        var aliasRadiusInput by remember(targetEditAlias.id) { mutableIntStateOf(targetEditAlias.radiusMeters) }
+        AlertDialog(
+            onDismissRequest = { editingAlias = null },
+            title = { Text("등록된 장소 수정") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = aliasNameInput,
+                        onValueChange = { aliasNameInput = it },
+                        label = { Text("장소 이름") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "자동 인식 반경 (주변 상가가 가까우면 30~50m로 좁혀 주세요)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(30, 50, 80, 150, 300).forEach { r ->
+                            FilterChip(
+                                selected = aliasRadiusInput == r,
+                                onClick = { aliasRadiusInput = r },
+                                label = { Text("${r}m") },
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onUpdateAlias(targetEditAlias.id, aliasNameInput.trim(), aliasRadiusInput)
+                        editingAlias = null
+                    },
+                    enabled = aliasNameInput.isNotBlank(),
+                ) {
+                    Text("저장")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingAlias = null }) { Text("취소") }
             },
         )
     }

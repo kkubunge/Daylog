@@ -1,6 +1,8 @@
 package com.aiutil.daylog.data
 
+import com.aiutil.daylog.location.PlaceClassifier
 import com.aiutil.daylog.location.PlaceVisitEngine
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceSource
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.SavedPlaceAlias
@@ -103,30 +105,99 @@ class LocationVisitStore(
         name: String,
         latitude: Double,
         longitude: Double,
-        radiusMeters: Int = 150,
+        radiusMeters: Int = 80,
     ) {
         val cleanName = name.trim()
         if (cleanName.isEmpty()) return
+        val safeRadius = radiusMeters.coerceIn(20, 1000)
         synchronized(lock) {
             val alias = SavedPlaceAlias(
                 id = "alias_${System.currentTimeMillis()}_${cleanName.hashCode()}",
                 name = cleanName,
                 latitude = latitude,
                 longitude = longitude,
-                radiusMeters = radiusMeters,
+                radiusMeters = safeRadius,
             )
             val updatedAliases = (_aliases.value.filterNot { it.name == cleanName } + alias)
             _aliases.value = updatedAliases
             saveAliasesLocked(updatedAliases)
+            applyAliasesToStoredVisitsLocked(updatedAliases)
+        }
+    }
 
-            // 기존 저장된 방문지에도 새 별칭 반영
+    fun updateAlias(
+        aliasId: String,
+        newName: String,
+        newRadiusMeters: Int,
+    ) {
+        val cleanName = newName.trim()
+        if (cleanName.isEmpty()) return
+        val safeRadius = newRadiusMeters.coerceIn(20, 1000)
+        synchronized(lock) {
+            val updatedAliases = _aliases.value.map { alias ->
+                if (alias.id == aliasId) alias.copy(name = cleanName, radiusMeters = safeRadius) else alias
+            }
+            _aliases.value = updatedAliases
+            saveAliasesLocked(updatedAliases)
+            applyAliasesToStoredVisitsLocked(updatedAliases)
+        }
+    }
+
+    fun overrideVisitInfo(
+        dateKey: String,
+        placeId: String,
+        newName: String,
+        newPoi: String,
+        newCategory: PlaceCategory,
+    ) {
+        val cleanName = newName.trim()
+        if (cleanName.isEmpty()) return
+        synchronized(lock) {
             val updatedVisits = _visits.value.map { visit ->
-                val matched = PlaceVisitEngine.resolveAlias(visit.latitude, visit.longitude, updatedAliases)
-                if (matched != null) visit.copy(placeName = matched.name) else visit
+                if (visit.dateKey == dateKey && visit.id == placeId) {
+                    visit.copy(
+                        placeName = cleanName,
+                        nearbyPoi = newPoi.trim(),
+                        category = newCategory,
+                        isManualOverride = true,
+                    )
+                } else {
+                    visit
+                }
             }
             _visits.value = updatedVisits
             saveVisitsLocked(updatedVisits)
         }
+    }
+
+    fun replaceVisitsForDate(dateKey: String, updatedDay: List<PlaceVisit>) {
+        synchronized(lock) {
+            val others = _visits.value.filterNot { it.dateKey == dateKey }
+            val merged = (others + updatedDay)
+                .sortedByDescending { it.startMs }
+                .take(MAX_STORED_VISITS)
+            _visits.value = merged
+            saveVisitsLocked(merged)
+        }
+    }
+
+    private fun applyAliasesToStoredVisitsLocked(aliases: List<SavedPlaceAlias>) {
+        val updatedVisits = _visits.value.map { visit ->
+            if (visit.isManualOverride) return@map visit
+            val matched = PlaceVisitEngine.resolveAlias(visit.latitude, visit.longitude, aliases)
+            if (matched != null) {
+                val aliasCat = PlaceClassifier.classifyByText(matched.name)
+                visit.copy(
+                    placeName = matched.name,
+                    nearbyPoi = "",
+                    category = if (aliasCat != PlaceCategory.GENERAL) aliasCat else visit.category,
+                )
+            } else {
+                visit
+            }
+        }
+        _visits.value = updatedVisits
+        saveVisitsLocked(updatedVisits)
     }
 
     fun deleteAlias(aliasId: String) {

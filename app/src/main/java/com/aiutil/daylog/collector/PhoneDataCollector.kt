@@ -106,6 +106,7 @@ class PhoneDataCollector(
         val endMs = DateUtils.dayRangeMs(maxKey).second
 
         val contactCache = mutableMapOf<String, String>()
+        val aliases = locationVisitStore.aliases.value
 
         val photosMap = if (settings.collectPhotos && hasPhotoPermission()) {
             queryPhotos(
@@ -115,6 +116,7 @@ class PhoneDataCollector(
                 excludeScreenshots = settings.excludeScreenshots,
                 extractGps = settings.extractPhotoGps,
                 maxExifReads = (targetSet.size * 15).coerceIn(MAX_EXIF_READ_PER_SCAN, 450),
+                aliases = aliases,
             )
         } else {
             emptyMap()
@@ -186,7 +188,6 @@ class PhoneDataCollector(
         }
 
         val gpsMap = locationVisitStore.visitsByDateRange(targetSet)
-        val aliases = locationVisitStore.aliases.value
 
         dateKeys.map { key ->
             val current = existingMap[key]
@@ -229,23 +230,40 @@ class PhoneDataCollector(
                 aliases = aliases,
                 nearbyActivities = mergedActivities,
             ).map { visit ->
-                // 재스캔 시에도 기존에 저장된 AI/수동 장소 분류와 상호명을 보존 (새로 찾은 상호가 있으면 우선)
-                if (visit.nearbyPoi.isNotBlank()) {
-                    visit
-                } else {
-                    val matchedPrev = prevPlaces.firstOrNull { prev ->
-                        prev.nearbyPoi.isNotBlank() &&
-                            (prev.id == visit.id || GeoUtils.distanceMeters(
-                                prev.latitude, prev.longitude, visit.latitude, visit.longitude
-                            ) <= 150.0)
-                    }
-                    if (matchedPrev != null) {
-                        visit.copy(
-                            nearbyPoi = matchedPrev.nearbyPoi,
-                            category = if (visit.category == PlaceCategory.GENERAL) matchedPrev.category else visit.category,
-                        )
-                    } else {
-                        visit
+                val matchedPrev = prevPlaces.firstOrNull { prev ->
+                    prev.id == visit.id || GeoUtils.distanceMeters(
+                        prev.latitude, prev.longitude, visit.latitude, visit.longitude
+                    ) <= 120.0
+                }
+                when {
+                    matchedPrev != null && matchedPrev.isManualOverride -> visit.copy(
+                        placeName = matchedPrev.placeName,
+                        nearbyPoi = matchedPrev.nearbyPoi,
+                        category = matchedPrev.category,
+                        isManualOverride = true,
+                    )
+                    visit.nearbyPoi.isNotBlank() -> visit
+                    else -> {
+                        val matchedAlias = PlaceVisitEngine.resolveAlias(visit.latitude, visit.longitude, aliases)
+                        if (matchedAlias != null) {
+                            visit
+                        } else if (matchedPrev != null && matchedPrev.nearbyPoi.isNotBlank()) {
+                            // 심야·장시간 체류에서 이미 상가 오탐으로 억제된 경우가 아닐 때만 이전 AI 추정치 보존
+                            val classifiedCheck = com.aiutil.daylog.location.PlaceClassifier.classify(
+                                placeName = visit.placeName,
+                                address = visit.address,
+                                nearbyPoi = matchedPrev.nearbyPoi,
+                                startMs = visit.startMs,
+                                endMs = visit.endMs,
+                                nearbyActivities = mergedActivities,
+                            )
+                            visit.copy(
+                                nearbyPoi = classifiedCheck.nearbyPoi,
+                                category = if (visit.category == PlaceCategory.GENERAL) classifiedCheck.category else visit.category,
+                            )
+                        } else {
+                            visit
+                        }
                     }
                 }
             }
@@ -262,6 +280,50 @@ class PhoneDataCollector(
         }
     }
 
+    /**
+     * 수동 새로고침 시 해당 날짜의 저장된 GPS 방문지 중 수동 수정·별칭이 없는 항목을
+     * 최신 역지오코딩 로직으로 재조회해 기존 잘못된 상호명(예: 먼 상가 오탐)을 정정한다.
+     */
+    suspend fun regeocodeGpsVisitsForDate(dateKey: String) = withContext(Dispatchers.IO) {
+        val currentVisits = locationVisitStore.visitsForDate(dateKey)
+        if (currentVisits.isEmpty()) return@withContext
+        val aliases = locationVisitStore.aliases.value
+        val updated = currentVisits.map { visit ->
+            if (visit.isManualOverride) return@map visit
+            val matchedAlias = PlaceVisitEngine.resolveAlias(visit.latitude, visit.longitude, aliases)
+            if (matchedAlias != null) {
+                val aliasCat = com.aiutil.daylog.location.PlaceClassifier.classifyByText(matchedAlias.name)
+                return@map visit.copy(
+                    placeName = matchedAlias.name,
+                    nearbyPoi = "",
+                    category = if (aliasCat != PlaceCategory.GENERAL) aliasCat else visit.category,
+                )
+            }
+            val geo = geocoder.reverseGeocode(visit.latitude, visit.longitude)
+            val classified = com.aiutil.daylog.location.PlaceClassifier.classify(
+                placeName = geo.placeName,
+                address = geo.address.ifBlank { visit.address },
+                nearbyPoi = geo.nearbyPoi,
+                osmCategoryHint = geo.osmCategoryHint,
+                startMs = visit.startMs,
+                endMs = visit.endMs,
+            )
+            val finalName = if (classified.nearbyPoi.isBlank() && geo.nearbyPoi.isNotBlank() && geo.placeName == geo.nearbyPoi) {
+                PlaceVisitEngine.cleanAddressFallback(geo.address.ifBlank { visit.address }, geo.cityName.ifBlank { visit.cityName }, geo.placeName)
+            } else {
+                geo.placeName
+            }
+            visit.copy(
+                cityName = geo.cityName.ifBlank { visit.cityName },
+                placeName = finalName,
+                nearbyPoi = classified.nearbyPoi,
+                category = classified.category,
+                address = geo.address.ifBlank { visit.address },
+            )
+        }
+        locationVisitStore.replaceVisitsForDate(dateKey, updated)
+    }
+
     private suspend fun queryPhotos(
         startMs: Long,
         endMs: Long,
@@ -269,6 +331,7 @@ class PhoneDataCollector(
         excludeScreenshots: Boolean,
         extractGps: Boolean,
         maxExifReads: Int = MAX_EXIF_READ_PER_SCAN,
+        aliases: List<com.aiutil.daylog.model.SavedPlaceAlias> = emptyList(),
     ): Map<String, List<DayPhoto>> {
         val result = mutableMapOf<String, MutableList<DayPhoto>>()
         val projection = arrayOf(
@@ -347,10 +410,11 @@ class PhoneDataCollector(
                             lat = latLng.first
                             lng = latLng.second
                             val geo = geocoder.reverseGeocode(lat, lng)
+                            val matchedAlias = PlaceVisitEngine.resolveAlias(lat, lng, aliases)
                             cityName = geo.cityName
-                            placeLabel = geo.placeName
-                            nearbyPoi = geo.nearbyPoi
-                            osmCategoryHint = geo.osmCategoryHint
+                            placeLabel = matchedAlias?.name ?: geo.placeName
+                            nearbyPoi = if (matchedAlias != null) "" else geo.nearbyPoi
+                            osmCategoryHint = if (matchedAlias != null) "" else geo.osmCategoryHint
                             address = geo.address
                         }
                     }

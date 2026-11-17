@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -82,8 +83,10 @@ import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.location.PlaceVisitEngine
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.PermissionStatus
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.ui.components.ActivityLogRow
 import com.aiutil.daylog.ui.components.DaylogPhotoImage
@@ -119,7 +122,8 @@ fun CalendarScreen(
     onCheckInCurrentLocation: (String) -> Unit,
     onAddNote: (dateKey: String, title: String, detail: String) -> Unit,
     onDeleteNote: (dateKey: String, activityId: String) -> Unit,
-    onSavePlaceAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onSavePlaceAlias: (name: String, radiusMeters: Int, visit: PlaceVisit) -> Unit,
+    onOverridePlaceVisit: (visit: PlaceVisit, newName: String, newPoi: String, newCategory: PlaceCategory) -> Unit,
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onSummarizeCall: (ActivityItem) -> Unit,
     onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
@@ -957,11 +961,19 @@ fun CalendarScreen(
     val targetVisit = aliasTargetVisit
     if (targetVisit != null) {
         SavePlaceAliasDialog(
-            initialName = targetVisit.placeName,
-            address = targetVisit.address,
+            visit = targetVisit,
             onDismiss = { aliasTargetVisit = null },
-            onSave = { aliasName ->
-                onSavePlaceAlias(aliasName, targetVisit)
+            onSaveAlias = { aliasName, radiusMeters ->
+                onSavePlaceAlias(aliasName, radiusMeters, targetVisit)
+                aliasTargetVisit = null
+            },
+            onOverrideVisit = { newName, clearPoi, newCategory ->
+                onOverridePlaceVisit(
+                    targetVisit,
+                    newName,
+                    if (clearPoi) "" else targetVisit.nearbyPoi,
+                    newCategory,
+                )
                 aliasTargetVisit = null
             },
         )
@@ -1016,41 +1028,175 @@ fun QuickNoteAddDialog(
 
 @Composable
 fun SavePlaceAliasDialog(
-    initialName: String,
-    address: String,
+    visit: PlaceVisit,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
+    onSaveAlias: (name: String, radiusMeters: Int) -> Unit,
+    onOverrideVisit: (name: String, clearPoi: Boolean, category: PlaceCategory) -> Unit,
 ) {
-    var name by remember(initialName) { mutableStateOf(initialName) }
+    var saveAsAlias by remember(visit.id) { mutableStateOf(true) }
+    var name by remember(visit.id) { mutableStateOf(visit.placeName) }
+    var radiusMeters by remember(visit.id) { mutableIntStateOf(80) }
+    var clearPoi by remember(visit.id) { mutableStateOf(visit.nearbyPoi.isNotBlank()) }
+    var selectedCategory by remember(visit.id) { mutableStateOf(visit.category) }
+
+    val addressFallback = remember(visit) {
+        PlaceVisitEngine.cleanAddressFallback(visit.address, visit.cityName, visit.placeName)
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("장소 이름 저장") },
+        title = { Text("장소 이름 수정 · 등록") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "이 반경(150m)에 머무를 때마다 지정한 이름으로 자동 표시됩니다.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (address.isNotBlank()) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (visit.address.isNotBlank()) {
                     Text(
-                        text = address,
+                        text = "주소: ${visit.address}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (visit.nearbyPoi.isNotBlank()) {
+                    Text(
+                        text = "자동 추정 상호: ${visit.nearbyPoi}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                // 적용 범위 선택: 항상 별칭으로 등록 vs 이번 기록만 수정
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    FilterChip(
+                        selected = saveAsAlias,
+                        onClick = { saveAsAlias = true },
+                        label = { Text("항상 자동 적용(별칭)", style = MaterialTheme.typography.labelSmall) },
+                    )
+                    FilterChip(
+                        selected = !saveAsAlias,
+                        onClick = { saveAsAlias = false },
+                        label = { Text("이번 기록만 수정", style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+
+                // 빠른 이름 추천 칩
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    listOf("집", "회사", "본가", "헬스장").forEach { preset ->
+                        FilterChip(
+                            selected = name == preset,
+                            onClick = {
+                                name = preset
+                                clearPoi = true
+                                selectedCategory = when (preset) {
+                                    "집", "본가" -> PlaceCategory.HOME
+                                    "회사" -> PlaceCategory.WORK
+                                    else -> selectedCategory
+                                }
+                            },
+                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                    if (visit.nearbyPoi.isNotBlank() && addressFallback.isNotBlank()) {
+                        FilterChip(
+                            selected = name == addressFallback && clearPoi,
+                            onClick = {
+                                name = addressFallback
+                                clearPoi = true
+                                selectedCategory = PlaceCategory.GENERAL
+                                saveAsAlias = false
+                            },
+                            label = { Text("상호 빼고 주소만", style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("장소 이름 (예: 집, 회사, 헬스장)") },
+                    label = { Text("표시할 장소 이름") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+
+                if (saveAsAlias) {
+                    Text(
+                        text = "인식 반경 (집·건물 주변에 상가가 많으면 30~50m 추천)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(30, 50, 80, 150, 300).forEach { r ->
+                            FilterChip(
+                                selected = radiusMeters == r,
+                                onClick = { radiusMeters = r },
+                                label = { Text("${r}m", style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                } else {
+                    if (visit.nearbyPoi.isNotBlank()) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FilterChip(
+                                selected = clearPoi,
+                                onClick = { clearPoi = !clearPoi },
+                                label = {
+                                    Text(
+                                        text = if (clearPoi) "'${visit.nearbyPoi}' 상호 지우기" else "기존 상호 유지",
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    Text(
+                        text = "카테고리",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        PlaceCategory.entries.forEach { cat ->
+                            FilterChip(
+                                selected = selectedCategory == cat,
+                                onClick = { selectedCategory = cat },
+                                label = { Text(cat.label, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onSave(name.trim()) },
+                onClick = {
+                    val clean = name.trim()
+                    if (saveAsAlias) {
+                        onSaveAlias(clean, radiusMeters)
+                    } else {
+                        onOverrideVisit(clean, clearPoi, selectedCategory)
+                    }
+                },
                 enabled = name.isNotBlank(),
             ) {
                 Text("저장")

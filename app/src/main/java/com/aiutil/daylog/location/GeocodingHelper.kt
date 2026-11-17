@@ -36,7 +36,6 @@ class GeocodingHelper(private val context: Context) {
     )
 
     private val cache = ConcurrentHashMap<String, GeoLabel>()
-    private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
         .readTimeout(4, TimeUnit.SECONDS)
@@ -68,7 +67,7 @@ class GeocodingHelper(private val context: Context) {
             )
         }
 
-        // 2. Overpass API로 반경 180m 이내 실제 상호·시설(POI) 검색
+        // 2. Overpass API로 반경 90m 이내 건물/단지(bounds 포함) 및 실제 초근접 상호·시설(POI) 검색
         val overpassPoi = withTimeoutOrNull(3500L) {
             fetchNearestOverpassPoi(latitude, longitude)
         }
@@ -104,11 +103,15 @@ class GeocodingHelper(private val context: Context) {
         return merged
     }
 
-    private data class PoiCandidate(
+    internal data class PoiCandidate(
         val name: String,
         val categoryHint: String,
         val distanceMeters: Double,
-        val priority: Int,
+        val isNode: Boolean,
+        val isInsideBounds: Boolean,
+        val isResidential: Boolean,
+        val isRetailOrDining: Boolean,
+        val score: Double,
     )
 
     private suspend fun fetchNearestOverpassPoi(latitude: Double, longitude: Double): PoiCandidate? =
@@ -116,7 +119,7 @@ class GeocodingHelper(private val context: Context) {
             runCatching {
                 val query = String.format(
                     Locale.US,
-                    "[out:json][timeout:4];(node(around:180,%.6f,%.6f)[\"name\"];way(around:180,%.6f,%.6f)[\"name\"];);out center 20;",
+                    "[out:json][timeout:4];(node(around:90,%.6f,%.6f)[\"name\"];way(around:90,%.6f,%.6f)[\"name\"];);out tags bb center 30;",
                     latitude,
                     longitude,
                     latitude,
@@ -135,48 +138,6 @@ class GeocodingHelper(private val context: Context) {
                 }
             }.getOrNull()
         }
-
-    private fun parseNearestOverpassPoi(rawJson: String, lat: Double, lng: Double): PoiCandidate? {
-        return runCatching {
-            val root = json.parseToJsonElement(rawJson).jsonObject
-            val elements = root["elements"]?.jsonArray ?: return null
-            val poiTagKeys = listOf("amenity", "tourism", "shop", "leisure", "office", "healthcare", "craft", "building")
-
-            elements.mapNotNull { el ->
-                val obj = el.jsonObject
-                val tags = obj["tags"]?.jsonObject ?: return@mapNotNull null
-                val name = tags["name:ko"]?.jsonPrimitive?.content?.trim()
-                    ?: tags["name"]?.jsonPrimitive?.content?.trim()
-                    ?: return@mapNotNull null
-                if (name.isBlank()) return@mapNotNull null
-
-                // 단순 도로명이나 행정 경계는 제외하고 실제 시설/상호를 우선 선택
-                val matchedHint = poiTagKeys.firstNotNullOfOrNull { key ->
-                    val v = tags[key]?.jsonPrimitive?.content?.trim()
-                    if (!v.isNullOrBlank() && v != "yes") "$key:$v" else null
-                } ?: if (tags.containsKey("building") || tags.containsKey("landuse")) {
-                    "building:yes"
-                } else {
-                    return@mapNotNull null
-                }
-
-                val eLat = obj["lat"]?.jsonPrimitive?.doubleOrNull
-                    ?: obj["center"]?.jsonObject?.get("lat")?.jsonPrimitive?.doubleOrNull
-                    ?: return@mapNotNull null
-                val eLng = obj["lon"]?.jsonPrimitive?.doubleOrNull
-                    ?: obj["center"]?.jsonObject?.get("lon")?.jsonPrimitive?.doubleOrNull
-                    ?: return@mapNotNull null
-
-                val dist = GeoUtils.distanceMeters(lat, lng, eLat, eLng)
-                val priority = when {
-                    tags.containsKey("tourism") || tags.containsKey("amenity") || tags.containsKey("shop") || tags.containsKey("leisure") || tags.containsKey("healthcare") -> 1
-                    tags.containsKey("office") -> 2
-                    else -> 3
-                }
-                PoiCandidate(name = name, categoryHint = matchedHint, distanceMeters = dist, priority = priority)
-            }.minWithOrNull(compareBy<PoiCandidate> { it.priority }.thenBy { it.distanceMeters })
-        }.getOrNull()
-    }
 
     private data class OsmInfo(
         val cityName: String,
@@ -289,6 +250,8 @@ class GeocodingHelper(private val context: Context) {
     }
 
     companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+
         internal fun simplifyCityName(raw: String): String {
             val clean = raw.trim()
             if (clean.isBlank()) return ""
@@ -298,6 +261,116 @@ class GeocodingHelper(private val context: Context) {
                 .replace("특별자치시", "시")
                 .replace("특별자치도", "")
                 .trim()
+        }
+
+        internal fun parseNearestOverpassPoi(rawJson: String, lat: Double, lng: Double): PoiCandidate? {
+            return runCatching {
+                val root = json.parseToJsonElement(rawJson).jsonObject
+                val elements = root["elements"]?.jsonArray ?: return null
+                val poiTagKeys = listOf("amenity", "tourism", "shop", "leisure", "office", "healthcare", "craft", "building", "landuse")
+                val residentialBuildingVals = setOf(
+                    "apartments", "residential", "house", "detached", "semidetached_house", "terrace", "dormitory",
+                )
+                val residentialNameHints = listOf(
+                    "아파트", "빌라", "오피스텔", "맨션", "주택", "타운", "레지던스", "주공",
+                    "래미안", "자이", "푸르지오", "힐스테이트", "아이파크", "롯데캐슬", "더샵", "e편한세상", "호반", "우미린",
+                )
+
+                val rawCandidates = elements.mapNotNull { el ->
+                    val obj = el.jsonObject
+                    val elType = obj["type"]?.jsonPrimitive?.content.orEmpty()
+                    val isNode = elType == "node"
+                    val tags = obj["tags"]?.jsonObject ?: return@mapNotNull null
+                    val name = tags["name:ko"]?.jsonPrimitive?.content?.trim()
+                        ?: tags["name"]?.jsonPrimitive?.content?.trim()
+                        ?: return@mapNotNull null
+                    if (name.isBlank()) return@mapNotNull null
+
+                    if (tags.containsKey("highway") && tags["highway"]?.jsonPrimitive?.content != "bus_stop") {
+                        return@mapNotNull null
+                    }
+                    if (tags.containsKey("boundary") || tags.containsKey("waterway")) {
+                        return@mapNotNull null
+                    }
+
+                    val matchedHint = poiTagKeys.firstNotNullOfOrNull { key ->
+                        val v = tags[key]?.jsonPrimitive?.content?.trim()
+                        if (!v.isNullOrBlank() && v != "yes") "$key:$v" else null
+                    } ?: if (tags.containsKey("building") || tags.containsKey("landuse")) {
+                        "building:yes"
+                    } else {
+                        return@mapNotNull null
+                    }
+
+                    val eLat = obj["lat"]?.jsonPrimitive?.doubleOrNull
+                        ?: obj["center"]?.jsonObject?.get("lat")?.jsonPrimitive?.doubleOrNull
+                        ?: return@mapNotNull null
+                    val eLng = obj["lon"]?.jsonPrimitive?.doubleOrNull
+                        ?: obj["center"]?.jsonObject?.get("lon")?.jsonPrimitive?.doubleOrNull
+                        ?: return@mapNotNull null
+
+                    val dist = GeoUtils.distanceMeters(lat, lng, eLat, eLng)
+
+                    val boundsObj = obj["bounds"]?.jsonObject
+                    val isInsideBounds = if (!isNode && boundsObj != null) {
+                        val minLat = boundsObj["minlat"]?.jsonPrimitive?.doubleOrNull
+                        val minLon = boundsObj["minlon"]?.jsonPrimitive?.doubleOrNull
+                        val maxLat = boundsObj["maxlat"]?.jsonPrimitive?.doubleOrNull
+                        val maxLon = boundsObj["maxlon"]?.jsonPrimitive?.doubleOrNull
+                        if (minLat != null && minLon != null && maxLat != null && maxLon != null) {
+                            val diag = GeoUtils.distanceMeters(minLat, minLon, maxLat, maxLon)
+                            diag <= 480.0 && lat in minLat..maxLat && lng in minLon..maxLon
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+
+                    if (isNode && dist > 45.0) return@mapNotNull null
+                    if (!isNode && !isInsideBounds && dist > 75.0) return@mapNotNull null
+
+                    val buildingVal = tags["building"]?.jsonPrimitive?.content?.lowercase().orEmpty()
+                    val landuseVal = tags["landuse"]?.jsonPrimitive?.content?.lowercase().orEmpty()
+                    val nameLower = name.lowercase()
+                    val isResidential = buildingVal in residentialBuildingVals ||
+                        landuseVal == "residential" ||
+                        residentialNameHints.any { nameLower.contains(it.lowercase()) }
+
+                    val isRetailOrDining = tags.containsKey("shop") ||
+                        tags["amenity"]?.jsonPrimitive?.content?.lowercase() in setOf(
+                            "cafe", "restaurant", "fast_food", "food_court", "pub", "bar", "convenience",
+                            "pharmacy", "bank", "beauty",
+                        )
+
+                    PoiCandidate(
+                        name = name,
+                        categoryHint = if (isResidential) "residential:$name" else matchedHint,
+                        distanceMeters = dist,
+                        isNode = isNode,
+                        isInsideBounds = isInsideBounds,
+                        isResidential = isResidential,
+                        isRetailOrDining = isRetailOrDining,
+                        score = dist,
+                    )
+                }
+
+                if (rawCandidates.isEmpty()) return null
+                val hasNearResidential = rawCandidates.any { it.isResidential && (it.isInsideBounds || it.distanceMeters <= 35.0) }
+
+                rawCandidates.map { cand ->
+                    var s = cand.distanceMeters
+                    if (cand.isInsideBounds) {
+                        s -= if (cand.isResidential) 30.0 else 20.0
+                    }
+                    if (hasNearResidential && cand.isRetailOrDining && cand.distanceMeters > 20.0) {
+                        s += 35.0
+                    } else if (cand.isRetailOrDining && cand.distanceMeters > 28.0) {
+                        s += 18.0
+                    }
+                    cand.copy(score = s)
+                }.minByOrNull { it.score }
+            }.getOrNull()
         }
     }
 }

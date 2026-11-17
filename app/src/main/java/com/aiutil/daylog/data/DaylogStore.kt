@@ -1,5 +1,7 @@
 package com.aiutil.daylog.data
 
+import com.aiutil.daylog.location.GeoUtils
+import com.aiutil.daylog.location.PlaceClassifier
 import com.aiutil.daylog.location.PlaceVisitEngine
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.DayRecord
@@ -177,14 +179,91 @@ class DaylogStore(private val file: File) {
         )
     }
 
+    fun overrideVisitInfo(
+        dateKey: String,
+        placeId: String,
+        newName: String,
+        newPoi: String,
+        newCategory: PlaceCategory,
+    ) {
+        val cleanName = newName.trim()
+        if (cleanName.isEmpty()) return
+        val cleanPoi = newPoi.trim()
+        synchronized(lock) {
+            val current = _records.value.firstOrNull { it.dateKey == dateKey } ?: return
+            val targetVisit = current.places.firstOrNull { it.id == placeId }
+            val updatedPlaces = current.places.map { visit ->
+                if (visit.id == placeId) {
+                    visit.copy(
+                        placeName = cleanName,
+                        nearbyPoi = cleanPoi,
+                        category = newCategory,
+                        isManualOverride = true,
+                    )
+                } else {
+                    visit
+                }
+            }
+            val updatedPhotos = if (targetVisit != null) {
+                current.photos.map { photo ->
+                    val lat = photo.latitude
+                    val lng = photo.longitude
+                    val isNearVisit = lat != null && lng != null &&
+                        GeoUtils.distanceMeters(lat, lng, targetVisit.latitude, targetVisit.longitude) <= 150.0 &&
+                        photo.dateTakenMs in (targetVisit.startMs - 30 * 60_000L)..(targetVisit.endMs + 30 * 60_000L)
+                    if (isNearVisit) {
+                        photo.copy(placeLabel = cleanName, nearbyPoi = cleanPoi)
+                    } else {
+                        photo
+                    }
+                }
+            } else {
+                current.photos
+            }
+            val updatedRecord = current.copy(
+                places = updatedPlaces,
+                photos = updatedPhotos,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            val remaining = _records.value.filterNot { it.dateKey == dateKey }
+            val allUpdated = (listOf(updatedRecord) + remaining).sortedByDescending { it.dateKey }
+            _records.value = allUpdated
+            saveLocked(allUpdated)
+        }
+    }
+
     fun refreshAliasesAcrossRecords(aliases: List<SavedPlaceAlias>) {
         synchronized(lock) {
             val updated = _records.value.map { rec ->
                 val newPlaces = rec.places.map { visit ->
+                    if (visit.isManualOverride) return@map visit
                     val matched = PlaceVisitEngine.resolveAlias(visit.latitude, visit.longitude, aliases)
-                    if (matched != null) visit.copy(placeName = matched.name) else visit
+                    if (matched != null) {
+                        val aliasCat = PlaceClassifier.classifyByText(matched.name)
+                        visit.copy(
+                            placeName = matched.name,
+                            nearbyPoi = "",
+                            category = if (aliasCat != PlaceCategory.GENERAL) aliasCat else visit.category,
+                        )
+                    } else {
+                        visit
+                    }
                 }
-                rec.copy(places = newPlaces)
+                val newPhotos = rec.photos.map { photo ->
+                    val lat = photo.latitude
+                    val lng = photo.longitude
+                    if (lat != null && lng != null) {
+                        val matched = PlaceVisitEngine.resolveAlias(lat, lng, aliases)
+                        if (matched != null) {
+                            photo.copy(placeLabel = matched.name, nearbyPoi = "")
+                        } else {
+                            photo
+                        }
+                    } else {
+                        photo
+                    }
+                }
+                rec.copy(places = newPlaces, photos = newPhotos)
             }
             _records.value = updated
             saveLocked(updated)

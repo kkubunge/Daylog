@@ -137,7 +137,7 @@ class LocationTrackerService : Service() {
     }
 
     private fun handleNewLocation(location: Location) {
-        if (location.hasAccuracy() && location.accuracy > 180f) return
+        if (location.hasAccuracy() && location.accuracy > 100f) return
         val ts = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
         val dateKey = DateUtils.dateKeyFromMs(ts)
 

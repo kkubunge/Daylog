@@ -119,6 +119,7 @@ data class PlaceVisit(
     val source: PlaceSource = PlaceSource.GPS_TRACKER,
     val distanceFromPrevMeters: Int = 0,
     val sampleCount: Int = 1,
+    val isManualOverride: Boolean = false,
 ) {
     val durationMinutes: Long
         get() = ((endMs - startMs) / 60_000L).coerceAtLeast(0L)

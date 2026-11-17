@@ -196,22 +196,29 @@ class GeminiClient {
             .take(8)
             .joinToString("\n") { "- ${DateUtils.formatTimeHm(it.timestampMs)} [${it.type.label}] ${it.title}: ${it.detail}" }
 
+        val startCal = java.util.Calendar.getInstance().apply { timeInMillis = visit.startMs }
+        val startHour = startCal.get(java.util.Calendar.HOUR_OF_DAY)
+        val isNightOrLongStay = visit.durationMinutes >= 180L || startHour >= 22 || startHour <= 5
+
         val prompt = """
-            아래 방문 장소의 GPS 좌표, 주소, 체류 시간, 같은 시간대 활동/결제 내역을 바탕으로 가장 가능성 높은 장소 카테고리와 실제 상호명(또는 시설/캠핑장/건물명)을 알려줘.
-            구글 검색을 활용해 해당 위도·경도 좌표 반경 200m 이내에 있는 실제 상호나 시설명을 우선 찾고, 진천군·백곡면 같은 단순 행정구역명은 poi에 적지 마.
+            아래 방문 장소의 GPS 좌표, 주소, 체류 시간, 같은 시간대 활동/결제 내역을 바탕으로 가장 가능성 높은 장소 카테고리와 실제 상호명(또는 시설/주거지/건물명)을 알려줘.
+            구글 검색을 활용해 해당 위도·경도 좌표에 정확히 위치한 실제 장소나 건물명을 우선 찾되, 다음 규칙을 반드시 지켜:
+            1) 진천군·백곡면·정자동 같은 단순 행정구역명만 poi에 적지 마.
+            2) 아파트·빌라·오피스텔·주택 등 주거지이거나, 밤늦은 시간(22시~06시) 또는 결제 내역 없이 장시간(3시간 이상) 머문 곳은 바로 옆/1층 상가(다이소, 편의점, 카페 등)를 방문한 것처럼 오인해 상점명을 적지 말고 HOME(주거 건물/아파트명)이나 WORK(회사/건물명)로 신중히 판단해.
+            3) 주변 시간대 활동에 해당 오프라인 매장의 실제 결제 내역이 있을 때만 그 상점명을 poi에 적어.
 
             카테고리 코드 (반드시 이 중 하나만 선택):
             RESTAURANT(식당), CAFE(카페), HOSPITAL(병원), WORK(업무), HOME(집), SHOPPING(쇼핑), TRANSIT(이동), OUTDOOR(야외), GENERAL(기타)
 
             반드시 아래 JSON 객체 한 줄만 출력해:
-            {"category":"OUTDOOR","poi":"실제 상호 또는 시설명"}
+            {"category":"HOME","poi":"실제 건물 또는 상호명"}
 
             방문 정보:
             - 도시: ${visit.cityName}
             - 기존 장소명: ${visit.placeName}
             - 주소: ${visit.address}
             - 좌표: ${visit.latitude}, ${visit.longitude}
-            - 체류: ${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} (${visit.durationMinutes}분)
+            - 체류: ${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} (${visit.durationMinutes}분${if (isNightOrLongStay) ", 장시간/심야 체류" else ""})
             - 주변 시간대 활동:
             ${nearbyActs.ifBlank { "없음" }}
         """.trimIndent()

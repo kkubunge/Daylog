@@ -1,6 +1,7 @@
 package com.aiutil.daylog.location
 
 import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceSource
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.SavedPlaceAlias
@@ -167,5 +168,70 @@ class PlaceVisitEngineTest {
             source = PlaceSource.PHOTO_EXIF,
         )
         assertTrue(stay1MinTwoPhotos.isStayWithThreshold(30))
+    }
+
+    @Test
+    fun `별칭 매칭 시 기존 잘못된 주변 상호를 제거하고 가장 가까운 별칭을 우선하며 수동 수정은 보존한다`() {
+        val dateKey = "2026-11-17"
+        val t0 = 1_794_880_000_000L
+        val homeAlias = SavedPlaceAlias(id = "h1", name = "집", latitude = 37.36500, longitude = 127.10500, radiusMeters = 100)
+        val gymAlias = SavedPlaceAlias(id = "g1", name = "헬스장", latitude = 37.36535, longitude = 127.10500, radiusMeters = 50)
+
+        // 집 좌표인데 기존 GPS 방문지에 잘못된 상호(다이소)가 들어있었던 경우
+        val wrongDaisoVisit = PlaceVisit(
+            id = "v_wrong",
+            dateKey = dateKey,
+            startMs = t0,
+            endMs = t0 + 30 * 60_000L,
+            latitude = 37.36502,
+            longitude = 127.10501,
+            placeName = "다이소OO점",
+            nearbyPoi = "다이소",
+            category = PlaceCategory.SHOPPING,
+            address = "경기도 성남시 분당구 정자동",
+        )
+        // 헬스장 바로 앞 좌표 -> 두 별칭 반경이 겹쳐도 더 가까운 헬스장이 선택돼야 함
+        val atGymVisit = PlaceVisit(
+            id = "v_gym",
+            dateKey = dateKey,
+            startMs = t0 + 60 * 60_000L,
+            endMs = t0 + 120 * 60_000L,
+            latitude = 37.36536,
+            longitude = 127.10500,
+            placeName = "정자동 상가",
+            nearbyPoi = "다이소",
+            category = PlaceCategory.SHOPPING,
+        )
+        // 사용자가 1회성으로 직접 수정한 장소 -> 별칭 반경 안이라도 덮어쓰지 않고 보존
+        val manualVisit = PlaceVisit(
+            id = "v_manual",
+            dateKey = dateKey,
+            startMs = t0 + 180 * 60_000L,
+            endMs = t0 + 200 * 60_000L,
+            latitude = 37.36501,
+            longitude = 127.10501,
+            placeName = "지인 방문",
+            nearbyPoi = "",
+            category = PlaceCategory.GENERAL,
+            isManualOverride = true,
+        )
+
+        val merged = PlaceVisitEngine.mergeDayPlaces(
+            gpsVisits = listOf(wrongDaisoVisit, atGymVisit, manualVisit),
+            photoVisits = emptyList(),
+            aliases = listOf(homeAlias, gymAlias),
+        )
+
+        assertEquals(3, merged.size)
+        assertEquals("집", merged[0].placeName)
+        assertEquals("", merged[0].nearbyPoi)
+        assertEquals(PlaceCategory.HOME, merged[0].category)
+
+        assertEquals("헬스장", merged[1].placeName)
+        assertEquals("", merged[1].nearbyPoi)
+
+        assertEquals("지인 방문", merged[2].placeName)
+        assertEquals("", merged[2].nearbyPoi)
+        assertTrue(merged[2].isManualOverride)
     }
 }

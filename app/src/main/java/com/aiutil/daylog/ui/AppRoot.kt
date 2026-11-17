@@ -74,6 +74,7 @@ import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DateScanLog
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.PermissionStatus
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceSource
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.ScanStatus
@@ -164,6 +165,7 @@ fun AppRoot(
             try {
                 if (showToast) {
                     App.geocoder.clearCache()
+                    App.collector.regeocodeGpsVisitsForDate(dateKey)
                 }
                 val existing = App.daylogs.getRecord(dateKey)
                 val updated = App.collector.collectDate(dateKey, existing, settings)
@@ -437,6 +439,23 @@ fun AppRoot(
         }
     }
 
+    fun saveAliasAndRefresh(name: String, radiusMeters: Int, visit: PlaceVisit) {
+        App.locationVisits.saveAlias(name, visit.latitude, visit.longitude, radiusMeters)
+        App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
+        scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'(반경 ${radiusMeters}m)을 저장했습니다.") }
+    }
+
+    fun overrideVisitAndRefresh(
+        visit: PlaceVisit,
+        newName: String,
+        newPoi: String,
+        newCategory: PlaceCategory,
+    ) {
+        App.locationVisits.overrideVisitInfo(visit.dateKey, visit.id, newName, newPoi, newCategory)
+        App.daylogs.overrideVisitInfo(visit.dateKey, visit.id, newName, newPoi, newCategory)
+        scope.launch { snackbarHostState.showSnackbar("장소 이름을 '${newName}'으로 수정했습니다.") }
+    }
+
     fun summarizeCallRecording(item: ActivityItem) {
         if (item.audioUri.isBlank()) {
             scope.launch { snackbarHostState.showSnackbar("이 통화에 연결된 녹음 파일이 없습니다.") }
@@ -693,10 +712,11 @@ fun AppRoot(
                         )
                     },
                     onDeleteNote = { dateKey, activityId -> App.daylogs.deleteActivity(dateKey, activityId) },
-                    onSavePlaceAlias = { name, visit ->
-                        App.locationVisits.saveAlias(name, visit.latitude, visit.longitude)
-                        App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
-                        scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
+                    onSavePlaceAlias = { name, radiusMeters, visit ->
+                        saveAliasAndRefresh(name, radiusMeters, visit)
+                    },
+                    onOverridePlaceVisit = { visit, newName, newPoi, newCategory ->
+                        overrideVisitAndRefresh(visit, newName, newPoi, newCategory)
                     },
                     onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
                     onSummarizeCall = { item -> summarizeCallRecording(item) },
@@ -727,10 +747,11 @@ fun AppRoot(
                     stayThresholdMin = settings.stayThresholdMin,
                     onSelectDate = { dateKey -> selectAndLoadDate(dateKey) },
                     onRefreshDate = { dateKey -> scanDate(dateKey, showToast = true) },
-                    onSaveAlias = { name, visit ->
-                        App.locationVisits.saveAlias(name, visit.latitude, visit.longitude)
-                        App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
-                        scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
+                    onSaveAlias = { name, radiusMeters, visit ->
+                        saveAliasAndRefresh(name, radiusMeters, visit)
+                    },
+                    onOverrideVisit = { visit, newName, newPoi, newCategory ->
+                        overrideVisitAndRefresh(visit, newName, newPoi, newCategory)
                     },
                     onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
                     onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
@@ -769,10 +790,11 @@ fun AppRoot(
                 )
             },
             onDeleteActivity = { activityId -> App.daylogs.deleteActivity(sheetDate, activityId) },
-            onSavePlaceAlias = { name, visit ->
-                App.locationVisits.saveAlias(name, visit.latitude, visit.longitude)
-                App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
-                scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
+            onSavePlaceAlias = { name, radiusMeters, visit ->
+                saveAliasAndRefresh(name, radiusMeters, visit)
+            },
+            onOverridePlaceVisit = { visit, newName, newPoi, newCategory ->
+                overrideVisitAndRefresh(visit, newName, newPoi, newCategory)
             },
             onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
             onSummarizeCall = { item -> summarizeCallRecording(item) },
@@ -803,6 +825,11 @@ fun AppRoot(
                 },
                 onToggleTrackingService = { toggleLocationTracking() },
                 onCheckInNow = { checkInCurrentLocation(todayKey) },
+                onUpdateAlias = { aliasId, newName, newRadius ->
+                    App.locationVisits.updateAlias(aliasId, newName, newRadius)
+                    App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
+                    scope.launch { snackbarHostState.showSnackbar("'${newName}'(반경 ${newRadius}m)로 수정했습니다.") }
+                },
                 onDeleteAlias = { aliasId -> App.locationVisits.deleteAlias(aliasId) },
                 onBatchScanRange = { startKey, endKey -> batchScanDateRange(startKey, endKey) },
             onRunScheduledScanNow = {

@@ -43,7 +43,13 @@ object PlaceClassifier {
     )
 
     private val homeKeywords = listOf(
-        "집", "우리집", "자택", "본가", "아파트", "빌라", "오피스텔", "레지던스", "주택",
+        "집", "우리집", "자택", "본가", "아파트", "빌라", "오피스텔", "레지던스", "주택", "맨션", "주공",
+    )
+
+    private val onlineOrTransferKeywords = listOf(
+        "쿠팡", "네이버페이", "카카오페이", "토스", "배달의민족", "배민", "요기요", "쿠팡이츠",
+        "컬리", "ssg", "g마켓", "11번가", "옥션", "알리", "테무", "이체", "송금", "출금",
+        "자동이체", "관리비", "통신비", "보험", "넷플릭스", "유튜브", "구글", "애플",
     )
 
     private val shoppingKeywords = listOf(
@@ -70,54 +76,89 @@ object PlaceClassifier {
         startMs: Long = 0L,
         endMs: Long = 0L,
         nearbyActivities: List<ActivityItem> = emptyList(),
+        isManualOverride: Boolean = false,
     ): ClassificationResult {
         var resolvedPoi = nearbyPoi.trim()
 
-        // 1. 인접 시간대(±45분) 결제·메모 활동에서 실제 이용 상호 단서 탐색
+        // 0. 사용자가 수동 수정했거나 별칭이 직접 지정된 장소(예: 집/회사)는 이름 자체의 카테고리를 우선 반영
+        val nameOnlyCat = classifyByText(placeName)
+        if (isManualOverride || (resolvedPoi.isBlank() && nameOnlyCat == PlaceCategory.HOME)) {
+            return ClassificationResult(
+                category = if (nameOnlyCat != PlaceCategory.GENERAL) nameOnlyCat else classifyByText("$placeName $address"),
+                nearbyPoi = resolvedPoi,
+            )
+        }
+
+        // 1. 인접 시간대(±45분) 오프라인 결제·메모 활동에서 실제 이용 상호 단서 탐색
         val matchedPayment = nearbyActivities
             .filter { act ->
                 (act.type == ActivityType.PAYMENT || act.type == ActivityType.NOTE) &&
                     (startMs <= 0L || abs(act.timestampMs - startMs) <= 45 * 60_000L || act.timestampMs in startMs..endMs)
             }
             .firstOrNull { act ->
-                val text = "${act.title} ${act.detail}"
-                classifyByText(text) != PlaceCategory.GENERAL
+                val text = "${act.title} ${act.detail}".lowercase()
+                val isOnline = onlineOrTransferKeywords.any { text.contains(it) }
+                !isOnline && classifyByText(text) != PlaceCategory.GENERAL
             }
 
         if (matchedPayment != null) {
             val payText = "${matchedPayment.title} ${matchedPayment.detail}"
             val payCat = classifyByText(payText)
             if (payCat != PlaceCategory.GENERAL) {
-                if (resolvedPoi.isBlank()) {
-                    resolvedPoi = extractMerchantHint(matchedPayment.title, matchedPayment.detail)
+                val merchant = extractMerchantHint(matchedPayment.title, matchedPayment.detail)
+                if (merchant.isNotBlank()) {
+                    resolvedPoi = merchant
                 }
                 return ClassificationResult(category = payCat, nearbyPoi = resolvedPoi)
             }
         }
 
-        // 2. OSM 카테고리 힌트 우선 확인
+        val stayMin = if (startMs > 0L && endMs > startMs) (endMs - startMs) / 60_000L else 0L
+        val isNightOrLongStay = if (startMs > 0L) {
+            val cal = Calendar.getInstance().apply { timeInMillis = startMs }
+            val startHour = cal.get(Calendar.HOUR_OF_DAY)
+            val endHour = if (endMs > startMs) {
+                Calendar.getInstance().apply { timeInMillis = endMs }.get(Calendar.HOUR_OF_DAY)
+            } else {
+                startHour
+            }
+            val lateNight = startHour >= 22 || startHour <= 5 || endHour < startHour
+            stayMin >= 180L || (lateNight && stayMin >= 45L)
+        } else {
+            false
+        }
+
+        // 2. OSM 카테고리 힌트 확인 (단, 심야/장기 체류인데 결제 내역 없이 상가·식당·카페로 잡힌 오탐은 억제)
         val osmCat = classifyOsmHint(osmCategoryHint)
         if (osmCat != PlaceCategory.GENERAL) {
-            return ClassificationResult(category = osmCat, nearbyPoi = resolvedPoi)
+            if (isNightOrLongStay && osmCat in setOf(PlaceCategory.SHOPPING, PlaceCategory.CAFE, PlaceCategory.RESTAURANT)) {
+                resolvedPoi = ""
+            } else {
+                return ClassificationResult(category = osmCat, nearbyPoi = resolvedPoi)
+            }
         }
 
         // 3. 장소명, 추정 상호, 주소 키워드 매칭
+        val poiCat = classifyByText(resolvedPoi)
+        if (isNightOrLongStay && poiCat in setOf(PlaceCategory.SHOPPING, PlaceCategory.CAFE, PlaceCategory.RESTAURANT)) {
+            resolvedPoi = ""
+        }
         val textCat = classifyByText("$placeName $resolvedPoi $address")
         if (textCat != PlaceCategory.GENERAL) {
             return ClassificationResult(category = textCat, nearbyPoi = resolvedPoi)
         }
 
-        // 4. 장시간 체류 시간대 휴리스틱 (평일 낮 3시간 이상 장기 체류 -> 업무)
-        if (startMs > 0L && endMs > startMs) {
-            val stayMin = (endMs - startMs) / 60_000L
-            if (stayMin >= 180L) {
-                val cal = Calendar.getInstance().apply { timeInMillis = startMs }
-                val dow = cal.get(Calendar.DAY_OF_WEEK)
-                val hour = cal.get(Calendar.HOUR_OF_DAY)
-                val isWeekday = dow in Calendar.MONDAY..Calendar.FRIDAY
-                if (isWeekday && hour in 7..17) {
-                    return ClassificationResult(category = PlaceCategory.WORK, nearbyPoi = resolvedPoi)
-                }
+        // 4. 장시간 체류 시간대 휴리스틱 (평일 낮 3시간 이상 -> 업무, 심야 장시간 -> 집 가능성)
+        if (startMs > 0L && endMs > startMs && stayMin >= 180L) {
+            val cal = Calendar.getInstance().apply { timeInMillis = startMs }
+            val dow = cal.get(Calendar.DAY_OF_WEEK)
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            val isWeekday = dow in Calendar.MONDAY..Calendar.FRIDAY
+            if (isWeekday && hour in 7..17) {
+                return ClassificationResult(category = PlaceCategory.WORK, nearbyPoi = resolvedPoi)
+            }
+            if (hour >= 21 || hour <= 4) {
+                return ClassificationResult(category = PlaceCategory.HOME, nearbyPoi = resolvedPoi)
             }
         }
 
@@ -142,6 +183,7 @@ object PlaceClassifier {
     fun classifyOsmHint(hint: String): PlaceCategory {
         val h = hint.lowercase()
         return when {
+            h.contains("residential") || h.contains("apartments") || h.contains("house") || h.contains("dormitory") -> PlaceCategory.HOME
             h.contains("cafe") || h.contains("coffee") || h.contains("bakery") -> PlaceCategory.CAFE
             h.contains("restaurant") || h.contains("fast_food") || h.contains("food_court") || h.contains("pub") -> PlaceCategory.RESTAURANT
             h.contains("hospital") || h.contains("clinic") || h.contains("pharmacy") || h.contains("doctors") || h.contains("dentist") -> PlaceCategory.HOSPITAL

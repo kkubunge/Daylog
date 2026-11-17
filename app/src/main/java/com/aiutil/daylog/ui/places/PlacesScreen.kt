@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DayRecord
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.ui.calendar.SavePlaceAliasDialog
 import com.aiutil.daylog.ui.components.PlaceVisitTimelineItem
@@ -67,7 +68,8 @@ fun PlacesScreen(
     stayThresholdMin: Int = 3,
     onSelectDate: (String) -> Unit,
     onRefreshDate: (String) -> Unit,
-    onSaveAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onSaveAlias: (name: String, radiusMeters: Int, visit: PlaceVisit) -> Unit,
+    onOverrideVisit: (visit: PlaceVisit, newName: String, newPoi: String, newCategory: PlaceCategory) -> Unit,
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
 ) {
@@ -395,11 +397,19 @@ fun PlacesScreen(
     val targetVisit = aliasTargetVisit
     if (targetVisit != null) {
         SavePlaceAliasDialog(
-            initialName = targetVisit.placeName,
-            address = targetVisit.address,
+            visit = targetVisit,
             onDismiss = { aliasTargetVisit = null },
-            onSave = { name ->
-                onSaveAlias(name, targetVisit)
+            onSaveAlias = { name, radiusMeters ->
+                onSaveAlias(name, radiusMeters, targetVisit)
+                aliasTargetVisit = null
+            },
+            onOverrideVisit = { newName, clearPoi, newCategory ->
+                onOverrideVisit(
+                    targetVisit,
+                    newName,
+                    if (clearPoi) "" else targetVisit.nearbyPoi,
+                    newCategory,
+                )
                 aliasTargetVisit = null
             },
         )
