@@ -333,6 +333,38 @@ fun AppRoot(
         }
     }
 
+    fun summarizeCallRecording(item: ActivityItem) {
+        if (item.audioUri.isBlank()) {
+            scope.launch { snackbarHostState.showSnackbar("이 통화에 연결된 녹음 파일이 없습니다.") }
+            return
+        }
+        if (!hasGeminiKey) {
+            showSettings = true
+            scope.launch { snackbarHostState.showSnackbar("통화 녹음 요약을 쓰려면 Gemini API 키를 먼저 입력해 주세요.") }
+            return
+        }
+        if (isAiBusy) return
+        scope.launch {
+            isAiBusy = true
+            try {
+                val summary = App.gemini.summarizeCallRecording(
+                    context = context,
+                    audioUri = item.audioUri,
+                    callerTitle = item.title,
+                    apiKey = settings.geminiApiKey,
+                )
+                if (summary != null) {
+                    App.daylogs.updateCallAiSummary(item.dateKey, item.id, summary)
+                    snackbarHostState.showSnackbar("${item.title} 통화 녹음을 요약했습니다.")
+                } else {
+                    snackbarHostState.showSnackbar("통화 녹음 요약에 실패했습니다. 파일 크기(14MB 이하)나 API 키를 확인해 주세요.")
+                }
+            } finally {
+                isAiBusy = false
+            }
+        }
+    }
+
     // 앱 진입 또는 권한 획득 시 오늘 날짜 자동 조회
     LaunchedEffect(permissionStatus.anyDataGranted, todayKey) {
         if (permissionStatus.anyDataGranted && todayKey !in autoScannedDates) {
@@ -508,6 +540,7 @@ fun AppRoot(
                         scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
                     },
                     onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
+                    onSummarizeCall = { item -> summarizeCallRecording(item) },
                     onPhotoClick = { photos, idx -> lightboxState = LightboxState(selectedDateKey, photos, idx) },
                     onOpenPermissions = { showSettings = true },
                 )
@@ -556,6 +589,7 @@ fun AppRoot(
             dateKey = sheetDate,
             record = recordsByDate[sheetDate],
             isScanning = isScanning,
+            isAiBusy = isAiBusy,
             onDismiss = { detailSheetDateKey = null },
             onRefreshDate = { scanDate(sheetDate, showToast = true) },
             onSaveQuickNote = { note ->
@@ -584,6 +618,7 @@ fun AppRoot(
                 scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
             },
             onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
+            onSummarizeCall = { item -> summarizeCallRecording(item) },
             onDeleteRecord = {
                 App.daylogs.deleteRecord(sheetDate)
                 detailSheetDateKey = null

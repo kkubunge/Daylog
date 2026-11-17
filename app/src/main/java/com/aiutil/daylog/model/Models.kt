@@ -138,6 +138,8 @@ data class ActivityItem(
     val detail: String,
     val durationSec: Long = 0L,
     val amountWon: Long = 0L,
+    val audioUri: String = "",
+    val aiCallSummary: String = "",
     val latitude: Double? = null,
     val longitude: Double? = null,
     val placeLabel: String = "",
@@ -202,6 +204,7 @@ data class DaylogSettings(
     val excludeScreenshots: Boolean = false,
     val collectPayments: Boolean = true,
     val collectCalls: Boolean = true,
+    val matchCallRecordings: Boolean = true,
     val collectSms: Boolean = true,
     val filterSpamSms: Boolean = true,
     val collectSns: Boolean = true,
@@ -216,6 +219,7 @@ data class DaylogSettings(
  */
 data class PermissionStatus(
     val photosGranted: Boolean = false,
+    val audioGranted: Boolean = false,
     val mediaLocationGranted: Boolean = false,
     val callLogGranted: Boolean = false,
     val contactsGranted: Boolean = false,

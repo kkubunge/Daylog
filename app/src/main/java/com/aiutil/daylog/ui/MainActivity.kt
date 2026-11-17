@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
 
         permissionStatus = PermissionStatus(
             photosGranted = collector.hasPhotoPermission(),
+            audioGranted = collector.hasAudioPermission(),
             mediaLocationGranted = collector.hasMediaLocationPermission(),
             callLogGranted = collector.hasCallLogPermission(),
             contactsGranted = collector.hasContactsPermission(),
@@ -122,6 +123,7 @@ class MainActivity : ComponentActivity() {
         val perms = buildList {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.READ_MEDIA_IMAGES)
+                add(Manifest.permission.READ_MEDIA_AUDIO)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
                 }

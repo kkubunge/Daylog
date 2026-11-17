@@ -65,6 +65,14 @@ class PhoneDataCollector(
     fun hasSmsPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
 
+    fun hasAudioPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     /**
      * 특정 일자의 모든 폰 데이터(사진·EXIF GPS·통화·문자·SNS·이동/체류 장소)를 조회해 통합한다.
      */
@@ -109,8 +117,14 @@ class PhoneDataCollector(
             emptyMap()
         }
 
+        val callRecordings = if (settings.collectCalls && settings.matchCallRecordings && hasAudioPermission()) {
+            queryCallRecordings(startMs, endMs)
+        } else {
+            emptyList()
+        }
+
         val callsMap = if (settings.collectCalls && hasCallLogPermission()) {
-            queryCallLogs(startMs, endMs, targetSet, contactCache)
+            queryCallLogs(startMs, endMs, targetSet, contactCache, callRecordings)
         } else {
             emptyMap()
         }
@@ -151,6 +165,9 @@ class PhoneDataCollector(
                 val savedCaption = prevCaptions[ph.uri].orEmpty()
                 if (ph.aiCaption.isBlank() && savedCaption.isNotBlank()) ph.copy(aiCaption = savedCaption) else ph
             }
+            val prevCallSummaries = current?.activities.orEmpty()
+                .filter { it.aiCallSummary.isNotBlank() }
+                .associate { it.id to it.aiCallSummary }
             val manualNotes = current?.activities.orEmpty().filter { it.type == ActivityType.NOTE }
             val mergedActivities = (
                 manualNotes +
@@ -159,6 +176,14 @@ class PhoneDataCollector(
                     notifMap[key].orEmpty()
                 )
                 .distinctBy { it.id }
+                .map { act ->
+                    val savedSummary = prevCallSummaries[act.id].orEmpty()
+                    if (act.aiCallSummary.isBlank() && savedSummary.isNotBlank()) {
+                        act.copy(aiCallSummary = savedSummary)
+                    } else {
+                        act
+                    }
+                }
                 .sortedBy { it.timestampMs }
 
             val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(key, photos, aliases)
@@ -307,11 +332,105 @@ class PhoneDataCollector(
         }.getOrNull()
     }
 
+    private data class AudioRecordingInfo(
+        val uri: String,
+        val displayName: String,
+        val folderName: String,
+        val dateModifiedMs: Long,
+        val durationMs: Long,
+    )
+
+    private fun queryCallRecordings(
+        startMs: Long,
+        endMs: Long,
+    ): List<AudioRecordingInfo> {
+        val list = mutableListOf<AudioRecordingInfo>()
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.BUCKET_DISPLAY_NAME,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.DURATION,
+        )
+        val startSec = (startMs / 1000L) - 3600L
+        val endSec = (endMs / 1000L) + 3600L
+        val selection = "${MediaStore.Audio.Media.DATE_MODIFIED} BETWEEN ? AND ?"
+        val args = arrayOf(startSec.toString(), endSec.toString())
+
+        runCatching {
+            context.contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                args,
+                "${MediaStore.Audio.Media.DATE_MODIFIED} ASC",
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameIdx = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
+                val bucketIdx = cursor.getColumnIndex(MediaStore.Audio.Media.BUCKET_DISPLAY_NAME)
+                val modIdx = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
+                val durIdx = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idIdx)
+                    val name = if (nameIdx >= 0) cursor.getString(nameIdx).orEmpty() else ""
+                    val folder = if (bucketIdx >= 0) cursor.getString(bucketIdx).orEmpty() else ""
+                    val modMs = (if (modIdx >= 0) cursor.getLong(modIdx) else 0L) * 1000L
+                    val durMs = if (durIdx >= 0) cursor.getLong(durIdx) else 0L
+
+                    val combined = "${folder.lowercase()} ${name.lowercase()}"
+                    val isLikelyCallRecording = listOf("call", "통화", "녹음", "record", "voice").any {
+                        combined.contains(it)
+                    }
+                    if (!isLikelyCallRecording) continue
+
+                    val uri = ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        id,
+                    ).toString()
+
+                    list.add(
+                        AudioRecordingInfo(
+                            uri = uri,
+                            displayName = name,
+                            folderName = folder,
+                            dateModifiedMs = modMs,
+                            durationMs = durMs,
+                        )
+                    )
+                }
+            }
+        }
+        return list
+    }
+
+    private fun matchRecordingForCall(
+        callStartMs: Long,
+        durationSec: Long,
+        personName: String,
+        rawNumber: String,
+        recordings: List<AudioRecordingInfo>,
+    ): String {
+        if (recordings.isEmpty() || durationSec <= 0L) return ""
+        val callEndMs = callStartMs + durationSec * 1000L
+        val numberTail = rawNumber.filter { it.isDigit() }.takeLast(4)
+
+        val matched = recordings.firstOrNull { rec ->
+            val timeNearEnd = kotlin.math.abs(rec.dateModifiedMs - callEndMs) <= 180_000L
+            val timeNearStart = kotlin.math.abs(rec.dateModifiedMs - callStartMs) <= 180_000L
+            val nameMatches = personName.isNotBlank() && rec.displayName.contains(personName, ignoreCase = true)
+            val tailMatches = numberTail.length == 4 && rec.displayName.contains(numberTail)
+            (timeNearEnd || timeNearStart) || ((nameMatches || tailMatches) && kotlin.math.abs(rec.dateModifiedMs - callEndMs) <= 600_000L)
+        }
+        return matched?.uri.orEmpty()
+    }
+
     private fun queryCallLogs(
         startMs: Long,
         endMs: Long,
         targetKeys: Set<String>,
         contactCache: MutableMap<String, String>,
+        recordings: List<AudioRecordingInfo>,
     ): Map<String, List<ActivityItem>> {
         val result = mutableMapOf<String, MutableList<ActivityItem>>()
         val projection = arrayOf(
@@ -361,10 +480,16 @@ class PhoneDataCollector(
                         CallLog.Calls.REJECTED_TYPE -> "거절"
                         else -> "통화"
                     }
-                    val detail = if (durationSec > 0L) {
-                        "$typeLabel · ${DateUtils.formatDurationKorean(durationSec)}"
-                    } else {
-                        typeLabel
+                    val matchedAudioUri = matchRecordingForCall(dateMs, durationSec, personName, number, recordings)
+                    val detail = buildString {
+                        append(typeLabel)
+                        if (durationSec > 0L) {
+                            append(" · ")
+                            append(DateUtils.formatDurationKorean(durationSec))
+                        }
+                        if (matchedAudioUri.isNotBlank()) {
+                            append(" · 녹음 있음")
+                        }
                     }
 
                     result.getOrPut(dateKey) { mutableListOf() }.add(
@@ -376,6 +501,7 @@ class PhoneDataCollector(
                             title = personName,
                             detail = detail,
                             durationSec = durationSec,
+                            audioUri = matchedAudioUri,
                         )
                     )
                 }

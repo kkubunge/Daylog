@@ -93,6 +93,19 @@ class DaylogStore(private val file: File) {
         )
     }
 
+    fun updateCallAiSummary(dateKey: String, activityId: String, summary: String) {
+        val current = getRecord(dateKey) ?: return
+        val updatedActivities = current.activities.map { act ->
+            if (act.id == activityId) act.copy(aiCallSummary = summary.trim()) else act
+        }
+        upsertRecord(
+            current.copy(
+                activities = updatedActivities,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+        )
+    }
+
     fun addActivity(dateKey: String, item: ActivityItem) {
         val current = getRecord(dateKey) ?: DayRecord(dateKey = dateKey)
         val merged = (current.activities.filterNot { it.id == item.id } + item)

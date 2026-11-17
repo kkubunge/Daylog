@@ -112,6 +112,7 @@ fun SettingsSheet(
                     ) {
                         Text("데이터 접근 권한", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         PermissionStatusRow("사진 조회", permissionStatus.photosGranted)
+                        PermissionStatusRow("통화 녹음 오디오 조회", permissionStatus.audioGranted)
                         PermissionStatusRow("사진 내 GPS 위치 읽기", permissionStatus.mediaLocationGranted)
                         PermissionStatusRow("통화 기록 & 연락처", permissionStatus.callLogGranted && permissionStatus.contactsGranted)
                         PermissionStatusRow("문자 메시지", permissionStatus.smsGranted)
@@ -233,6 +234,11 @@ fun SettingsSheet(
                             title = "통화 내역 조회",
                             checked = settings.collectCalls,
                             onCheckedChange = { v -> onUpdateSettings { it.copy(collectCalls = v) } },
+                        )
+                        SettingSwitchRow(
+                            title = "통화 녹음 파일 자동 매칭 (AI 요약용)",
+                            checked = settings.matchCallRecordings,
+                            onCheckedChange = { v -> onUpdateSettings { it.copy(matchCallRecordings = v) } },
                         )
                         SettingSwitchRow(
                             title = "문자 내역 조회",

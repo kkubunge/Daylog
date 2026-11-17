@@ -219,6 +219,59 @@ class GeminiClient {
         parsePlaceClassificationResponse(raw)
     }
 
+    /**
+     * 매칭된 통화 녹음 오디오 파일을 Gemini로 듣고 핵심 용건과 약속을 2~3줄로 요약한다.
+     */
+    suspend fun summarizeCallRecording(
+        context: Context,
+        audioUri: String,
+        callerTitle: String,
+        apiKey: String,
+    ): String? = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isEmpty() || audioUri.isBlank()) return@withContext null
+
+        val uri = Uri.parse(audioUri)
+        val mimeType = context.contentResolver.getType(uri) ?: "audio/mp4"
+        val audioBytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val bytes = stream.readBytes()
+                if (bytes.isEmpty() || bytes.size > 14 * 1024 * 1024) null else bytes
+            }
+        }.getOrNull() ?: return@withContext null
+
+        val base64 = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
+        val prompt = """
+            아래는 '$callerTitle'님과의 통화 녹음 파일이야.
+            통화 내용을 듣고 핵심 내용을 한국어 2~3줄 개조식(• 기호)으로 간단하게 정리해줘.
+            - 주된 용건/주제
+            - 합의된 일정, 장소, 금액, 할 일이 있다면 꼭 포함
+            - 녹음이 불명확하거나 무음이면 확인 가능한 부분만 짧게 적어줘.
+        """.trimIndent()
+
+        val bodyJson = buildJsonObject {
+            put("contents", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("parts", buildJsonArray {
+                        add(buildJsonObject { put("text", prompt) })
+                        add(buildJsonObject {
+                            put("inlineData", buildJsonObject {
+                                put("mimeType", mimeType)
+                                put("data", base64)
+                            })
+                        })
+                    })
+                })
+            })
+            put("generationConfig", buildJsonObject {
+                put("temperature", 0.2)
+            })
+        }.toString()
+
+        callGeminiGenerateContent(bodyJson, cleanKey)?.trim()?.take(320)?.takeIf { it.isNotBlank() }
+    }
+
     private fun buildTextRequestBody(
         prompt: String,
         temperature: Double,
@@ -364,6 +417,9 @@ internal fun buildRecordsContext(records: List<DayRecord>, maxDays: Int = 40): S
                 rec.activities.take(18).forEach { act ->
                     val label = if (act.type == ActivityType.SNS) act.snsPlatform.displayName else act.type.label
                     append("\n- ${DateUtils.formatTimeHm(act.timestampMs)} [$label] ${act.title}: ${act.detail}")
+                    if (act.aiCallSummary.isNotBlank()) {
+                        append(" (통화요약: ${act.aiCallSummary.replace("\n", " / ")})")
+                    }
                 }
             }
             if (rec.quickNote.isNotBlank()) {
