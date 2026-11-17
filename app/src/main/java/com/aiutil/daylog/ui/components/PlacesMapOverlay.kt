@@ -3,6 +3,7 @@ package com.aiutil.daylog.ui.components
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.view.MotionEvent
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -41,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -298,7 +300,90 @@ fun PlacesMapOverlay(
     }
 }
 
-private fun openAllPlacesInExternalMap(context: android.content.Context, places: List<PlaceVisit>) {
+/**
+ * 탭/카드 내부에 바로 삽입해 선택한 날짜의 이동·체류 장소를 지도로 띄우는 인라인 WebView 지도.
+ */
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+@Composable
+fun PlacesInlineMapView(
+    places: List<PlaceVisit>,
+    stayThresholdMin: Int = 3,
+    focusIndex: Int? = null,
+    modifier: Modifier = Modifier,
+) {
+    val validPlaces = remember(places) {
+        places.filter { !(it.latitude == 0.0 && it.longitude == 0.0) }
+    }
+    val mapHtml = remember(validPlaces, stayThresholdMin) {
+        buildPlacesMapHtml(validPlaces, stayThresholdMin)
+    }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var lastLoadedHtml by remember { mutableStateOf("") }
+
+    LaunchedEffect(focusIndex) {
+        val idx = focusIndex ?: return@LaunchedEffect
+        if (idx in validPlaces.indices) {
+            webViewRef?.evaluateJavascript("if (window.focusPlace) window.focusPlace($idx);", null)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching {
+                webViewRef?.stopLoading()
+                webViewRef?.destroy()
+            }
+            webViewRef = null
+        }
+    }
+
+    if (validPlaces.isEmpty()) {
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "이 날짜에 지도에 표시할 좌표가 없습니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.loadsImagesAutomatically = true
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    webViewClient = WebViewClient()
+                    setOnTouchListener { v, event ->
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                                v.parent?.requestDisallowInterceptTouchEvent(true)
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                                v.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                        false
+                    }
+                    lastLoadedHtml = mapHtml
+                    loadDataWithBaseURL("https://localhost/", mapHtml, "text/html", "UTF-8", null)
+                    webViewRef = this
+                }
+            },
+            update = { view ->
+                webViewRef = view
+                if (lastLoadedHtml != mapHtml) {
+                    lastLoadedHtml = mapHtml
+                    view.loadDataWithBaseURL("https://localhost/", mapHtml, "text/html", "UTF-8", null)
+                }
+            },
+            modifier = modifier,
+        )
+    }
+}
+
+internal fun openAllPlacesInExternalMap(context: android.content.Context, places: List<PlaceVisit>) {
     if (places.isEmpty()) return
     val url = if (places.size == 1) {
         val p = places.first()

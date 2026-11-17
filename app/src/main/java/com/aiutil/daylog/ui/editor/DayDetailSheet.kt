@@ -104,10 +104,12 @@ fun DayDetailSheet(
     var placesExpanded by remember { mutableStateOf(true) }
     var activitiesExpanded by remember { mutableStateOf(true) }
 
-    val paymentCount = current.activities.count { it.type == ActivityType.PAYMENT }
-    val callCount = current.activities.count { it.type == ActivityType.CALL }
-    val smsCount = current.activities.count { it.type == ActivityType.SMS }
-    val snsCount = current.activities.count { it.type == ActivityType.SNS }
+    val noteActivities = remember(current.activities) { current.activities.filter { it.type == ActivityType.NOTE } }
+    val nonNoteActivities = remember(current.activities) { current.activities.filter { it.type != ActivityType.NOTE } }
+    val paymentCount = nonNoteActivities.count { it.type == ActivityType.PAYMENT }
+    val callCount = nonNoteActivities.count { it.type == ActivityType.CALL }
+    val smsCount = nonNoteActivities.count { it.type == ActivityType.SMS }
+    val snsCount = nonNoteActivities.count { it.type == ActivityType.SNS }
     val photoRows = remember(current.photos) { current.photos.chunked(3) }
 
     ModalBottomSheet(
@@ -172,6 +174,41 @@ fun DayDetailSheet(
                     smsCount = smsCount,
                     snsCount = snsCount,
                 )
+            }
+
+            // 0. 메모가 적혀 있으면 활동 내역에서 분리해 맨 위에 별도 표시
+            if (noteActivities.isNotEmpty() || current.quickNote.isNotBlank()) {
+                item(key = "detail_memo_header") {
+                    Text(
+                        text = "메모",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                if (current.quickNote.isNotBlank()) {
+                    item(key = "detail_top_quick_note") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = current.quickNote,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+                items(noteActivities, key = { "dm_${it.id}" }) { noteItem ->
+                    ActivityLogRow(
+                        item = noteItem,
+                        isAiBusy = isAiBusy,
+                        onSummarizeCall = null,
+                        onDelete = { onDeleteActivity(noteItem.id) },
+                    )
+                }
             }
 
             // 1. 이동 및 체류 장소 전체 (전체 지도 + 펼치기/접기)
@@ -293,7 +330,7 @@ fun DayDetailSheet(
                         .clickable { activitiesExpanded = !activitiesExpanded },
                 ) {
                     Text(
-                        text = "시간순 활동 내역 (${current.activities.size})",
+                        text = "시간순 활동 내역 (${nonNoteActivities.size})",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
@@ -310,7 +347,7 @@ fun DayDetailSheet(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("메모 추가", style = MaterialTheme.typography.labelSmall)
                         }
-                        if (current.activities.isNotEmpty()) {
+                        if (nonNoteActivities.isNotEmpty()) {
                             IconButton(onClick = { activitiesExpanded = !activitiesExpanded }, modifier = Modifier.size(28.dp)) {
                                 Icon(
                                     imageVector = if (activitiesExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -322,7 +359,7 @@ fun DayDetailSheet(
                 }
             }
 
-            if (current.activities.isEmpty()) {
+            if (nonNoteActivities.isEmpty()) {
                 item(key = "detail_activities_empty") {
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
@@ -331,7 +368,7 @@ fun DayDetailSheet(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = "기록된 통화·문자·SNS 활동이 없습니다.",
+                            text = "기록된 통화·문자·결제·SNS 활동이 없습니다.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(14.dp),
@@ -339,16 +376,12 @@ fun DayDetailSheet(
                     }
                 }
             } else if (activitiesExpanded) {
-                items(current.activities, key = { "da_${it.id}" }) { item ->
+                items(nonNoteActivities, key = { "da_${it.id}" }) { item ->
                     ActivityLogRow(
                         item = item,
                         isAiBusy = isAiBusy,
                         onSummarizeCall = onSummarizeCall,
-                        onDelete = if (item.type == ActivityType.NOTE) {
-                            { onDeleteActivity(item.id) }
-                        } else {
-                            null
-                        },
+                        onDelete = null,
                     )
                 }
             }

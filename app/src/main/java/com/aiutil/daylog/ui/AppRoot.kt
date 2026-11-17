@@ -692,24 +692,18 @@ fun AppRoot(
                 )
 
                 DaylogTab.PLACES -> PlacesScreen(
-                    records = records,
-                    aliases = aliases,
-                    isTrackingRunning = isTrackingRunning,
-                    hasLocationPermission = permissionStatus.locationGranted,
+                    todayKey = todayKey,
+                    selectedDateKey = selectedDateKey,
+                    recordsByDate = recordsByDate,
                     stayThresholdMin = settings.stayThresholdMin,
-                    onToggleTracking = { toggleLocationTracking() },
-                    onCheckInNow = { checkInCurrentLocation(todayKey) },
+                    onSelectDate = { dateKey -> selectAndLoadDate(dateKey) },
+                    onRefreshDate = { dateKey -> scanDate(dateKey, showToast = true) },
                     onSaveAlias = { name, visit ->
                         App.locationVisits.saveAlias(name, visit.latitude, visit.longitude)
                         App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
                         scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
                     },
                     onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
-                    onDeleteAlias = { aliasId -> App.locationVisits.deleteAlias(aliasId) },
-                    onOpenDate = { dateKey ->
-                        selectAndLoadDate(dateKey)
-                        activeTab = DaylogTab.CALENDAR
-                    },
                     onOpenPlacesMap = { title, places -> mapOverlayState = MapOverlayState(title, places) },
                 )
             }
@@ -764,21 +758,24 @@ fun AppRoot(
 
         if (showSettings && curLightbox == null && curMapOverlay == null) {
             SettingsSheet(
-            todayKey = todayKey,
-            settings = settings,
-            permissionStatus = permissionStatus,
-            isTrackingRunning = isTrackingRunning,
-            isBatchScanning = isScanning,
-            scanLogsByDate = scanLogsByDate,
-            scheduledRuns = scheduledRuns,
-            onDismiss = { showSettings = false },
-            onRequestRuntimePermissions = onRequestRuntimePermissions,
-            onRequestBackgroundLocation = onRequestBackgroundLocation,
-            onOpenNotificationListenerSettings = {
-                runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
-            },
-            onToggleTrackingService = { toggleLocationTracking() },
-            onBatchScanRange = { startKey, endKey -> batchScanDateRange(startKey, endKey) },
+                todayKey = todayKey,
+                settings = settings,
+                permissionStatus = permissionStatus,
+                isTrackingRunning = isTrackingRunning,
+                isBatchScanning = isScanning,
+                aliases = aliases,
+                scanLogsByDate = scanLogsByDate,
+                scheduledRuns = scheduledRuns,
+                onDismiss = { showSettings = false },
+                onRequestRuntimePermissions = onRequestRuntimePermissions,
+                onRequestBackgroundLocation = onRequestBackgroundLocation,
+                onOpenNotificationListenerSettings = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                },
+                onToggleTrackingService = { toggleLocationTracking() },
+                onCheckInNow = { checkInCurrentLocation(todayKey) },
+                onDeleteAlias = { aliasId -> App.locationVisits.deleteAlias(aliasId) },
+                onBatchScanRange = { startKey, endKey -> batchScanDateRange(startKey, endKey) },
             onRunScheduledScanNow = {
                 ScheduledScanScheduler.enqueueBackgroundScan(context)
                 scope.launch {

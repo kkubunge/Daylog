@@ -134,18 +134,21 @@ fun CalendarScreen(
     val places = selectedRecord?.places.orEmpty()
     val photos = selectedRecord?.photos.orEmpty()
     val activities = selectedRecord?.activities.orEmpty()
-    val paymentCount = activities.count { it.type == ActivityType.PAYMENT }
-    val callCount = activities.count { it.type == ActivityType.CALL }
-    val smsCount = activities.count { it.type == ActivityType.SMS }
-    val snsCount = activities.count { it.type == ActivityType.SNS }
+    val noteActivities = remember(activities) { activities.filter { it.type == ActivityType.NOTE } }
+    val nonNoteActivities = remember(activities) { activities.filter { it.type != ActivityType.NOTE } }
+    val quickNoteText = selectedRecord?.quickNote?.trim().orEmpty()
+    val paymentCount = nonNoteActivities.count { it.type == ActivityType.PAYMENT }
+    val callCount = nonNoteActivities.count { it.type == ActivityType.CALL }
+    val smsCount = nonNoteActivities.count { it.type == ActivityType.SMS }
+    val snsCount = nonNoteActivities.count { it.type == ActivityType.SNS }
 
-    val filteredActivities = remember(activities, activeFilter) {
+    val filteredActivities = remember(nonNoteActivities, activeFilter) {
         when (activeFilter) {
-            DaySectionFilter.ALL -> activities
-            DaySectionFilter.PAYMENT -> activities.filter { it.type == ActivityType.PAYMENT }
-            DaySectionFilter.CALL -> activities.filter { it.type == ActivityType.CALL }
-            DaySectionFilter.SMS -> activities.filter { it.type == ActivityType.SMS }
-            DaySectionFilter.SNS -> activities.filter { it.type == ActivityType.SNS }
+            DaySectionFilter.ALL -> nonNoteActivities
+            DaySectionFilter.PAYMENT -> nonNoteActivities.filter { it.type == ActivityType.PAYMENT }
+            DaySectionFilter.CALL -> nonNoteActivities.filter { it.type == ActivityType.CALL }
+            DaySectionFilter.SMS -> nonNoteActivities.filter { it.type == ActivityType.SMS }
+            DaySectionFilter.SNS -> nonNoteActivities.filter { it.type == ActivityType.SNS }
             else -> emptyList()
         }
     }
@@ -388,6 +391,42 @@ fun CalendarScreen(
                 IconButton(onClick = { onOpenFullDetail(selectedDateKey) }) {
                     Icon(Icons.Default.OpenInFull, contentDescription = "상세 크게 보기")
                 }
+            }
+        }
+
+        // 2.5 메모가 적혀 있으면 활동 내역에서 분리해 맨 위에 별도 표시
+        if (noteActivities.isNotEmpty() || quickNoteText.isNotBlank()) {
+            item(key = "top_memo_header") {
+                Text(
+                    text = "메모",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            if (quickNoteText.isNotBlank()) {
+                item(key = "top_quick_note_card") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = quickNoteText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+            items(noteActivities, key = { "note_${it.id}" }) { noteItem ->
+                ActivityLogRow(
+                    item = noteItem,
+                    isAiBusy = isAiBusy,
+                    onSummarizeCall = null,
+                    onDelete = { onDeleteNote(selectedDateKey, noteItem.id) },
+                )
             }
         }
 

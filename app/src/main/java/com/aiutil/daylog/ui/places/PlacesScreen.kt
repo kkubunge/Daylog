@@ -2,6 +2,7 @@ package com.aiutil.daylog.ui.places
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,22 +15,29 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,52 +45,49 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.PlaceVisit
-import com.aiutil.daylog.model.SavedPlaceAlias
 import com.aiutil.daylog.ui.calendar.SavePlaceAliasDialog
 import com.aiutil.daylog.ui.components.PlaceVisitTimelineItem
-import com.aiutil.daylog.ui.components.openLocationInMap
+import com.aiutil.daylog.ui.components.PlacesInlineMapView
+import com.aiutil.daylog.ui.components.openAllPlacesInExternalMap
 import com.aiutil.daylog.util.DateUtils
 
+/**
+ * 이동 장소 전용 화면:
+ * 날짜를 선택하면 해당 날짜의 모든 이동·체류 장소를 지도에 바로 띄우고 상세 목록을 표시한다.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlacesScreen(
-    records: List<DayRecord>,
-    aliases: List<SavedPlaceAlias>,
-    isTrackingRunning: Boolean,
-    hasLocationPermission: Boolean,
+    todayKey: String,
+    selectedDateKey: String,
+    recordsByDate: Map<String, DayRecord>,
     stayThresholdMin: Int = 3,
-    onToggleTracking: () -> Unit,
-    onCheckInNow: () -> Unit,
+    onSelectDate: (String) -> Unit,
+    onRefreshDate: (String) -> Unit,
     onSaveAlias: (name: String, visit: PlaceVisit) -> Unit,
     onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
-    onDeleteAlias: (aliasId: String) -> Unit,
-    onOpenDate: (String) -> Unit,
     onOpenPlacesMap: (title: String, places: List<PlaceVisit>) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
+    var showDatePicker by remember { mutableStateOf(false) }
+    var focusedPinIdx by remember(selectedDateKey) { mutableStateOf<Int?>(null) }
     var aliasTargetVisit by remember { mutableStateOf<PlaceVisit?>(null) }
 
-    val recentVisits = remember(records) {
-        records
-            .flatMap { it.places }
-            .sortedByDescending { it.startMs }
-            .take(50)
-    }
-
-    val topPlaces = remember(records) {
-        records
-            .flatMap { it.places }
-            .groupBy { it.placeName }
-            .map { (name, list) ->
-                Triple(name, list.size, list.sumOf { it.durationMinutes })
-            }
-            .sortedByDescending { it.second * 10 + it.third }
-            .take(8)
+    val selectedRecord = recordsByDate[selectedDateKey]
+    val dayPlaces = selectedRecord?.places.orEmpty()
+    val recentPlaceDates = remember(recordsByDate) {
+        recordsByDate.values
+            .filter { it.places.isNotEmpty() }
+            .sortedByDescending { it.dateKey }
+            .take(12)
+            .map { it.dateKey }
     }
 
     LazyColumn(
@@ -90,142 +95,87 @@ fun PlacesScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // 1. GPS 위치 추적 상태 컨트롤 카드
-        item(key = "location_status_card") {
+        // 1. 날짜 선택 바 (< 날짜 달력 > + 장소 기록 있는 최근 날짜 칩)
+        item(key = "places_date_selector") {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        IconButton(
+                            onClick = { onSelectDate(DateUtils.daysAgoKey(selectedDateKey, 1)) },
+                            modifier = Modifier.size(34.dp),
+                        ) {
+                            Icon(Icons.Default.ChevronLeft, contentDescription = "이전 날짜")
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DateRange,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
                             Text(
-                                text = if (isTrackingRunning) "이동·체류 GPS 자동 기록 중" else "GPS 자동 기록 꺼짐",
+                                text = DateUtils.formatKoreanDate(selectedDateKey),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                             )
-                            Text(
-                                text = if (hasLocationPermission) {
-                                    "150m 이상 이동 시 새 장소를 기록하고 체류 시간을 자동 계산합니다."
-                                } else {
-                                    "위치 권한을 허용하면 백그라운드 이동·체류 장소를 자동으로 남깁니다."
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    val nextKey = DateUtils.daysAgoKey(selectedDateKey, -1)
+                                    if (nextKey <= todayKey) onSelectDate(nextKey)
                                 },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = onToggleTracking,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = if (isTrackingRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isTrackingRunning) "기록 중지" else "자동 기록 시작")
-                        }
-                        OutlinedButton(
-                            onClick = onCheckInNow,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("현재 위치 기록")
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. 저장된 장소 별칭 (집, 회사 등)
-        if (aliases.isNotEmpty()) {
-            item(key = "aliases_header") {
-                Text(
-                    text = "등록된 장소 이름 (${aliases.size})",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            items(aliases, key = { it.id }) { alias ->
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    ) {
-                        Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(alias.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = "반경 ${alias.radiusMeters}m 자동 매칭",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        IconButton(onClick = { onDeleteAlias(alias.id) }) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "별칭 삭제", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. 자주 머문 장소 요약
-        if (topPlaces.isNotEmpty()) {
-            item(key = "top_places_header") {
-                Text(
-                    text = "자주 방문한 장소",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            item(key = "top_places_list") {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        topPlaces.forEach { (name, count, totalMins) ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth(),
+                                enabled = selectedDateKey < todayKey,
+                                modifier = Modifier.size(34.dp),
                             ) {
-                                Text(
-                                    text = name,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    text = if (totalMins > 0) "${count}회 · ${DateUtils.formatStayMinutes(totalMins)}" else "${count}회",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                Icon(Icons.Default.ChevronRight, contentDescription = "다음 날짜")
+                            }
+                            IconButton(
+                                onClick = { onRefreshDate(selectedDateKey) },
+                                modifier = Modifier.size(34.dp),
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = "새로고침", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+
+                    if (recentPlaceDates.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            recentPlaceDates.forEach { dKey ->
+                                FilterChip(
+                                    selected = dKey == selectedDateKey,
+                                    onClick = { onSelectDate(dKey) },
+                                    label = {
+                                        val count = recordsByDate[dKey]?.places?.size ?: 0
+                                        Text(
+                                            text = "${dKey.takeLast(5)} (${count})",
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    },
                                 )
                             }
                         }
@@ -234,69 +184,118 @@ fun PlacesScreen(
             }
         }
 
-        // 4. 최근 방문 · 체류 기록
-        item(key = "recent_visits_header") {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+        // 2. 선택한 날짜의 이동 · 체류 지도 바로 표시
+        item(key = "places_inline_map") {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(
-                    text = "최근 방문 및 체류 장소 (${recentVisits.size})",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                if (recentVisits.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = { onOpenPlacesMap("최근 이동 · 체류 지도", recentVisits) },
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp),
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
-                        Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("전체 지도", style = MaterialTheme.typography.labelSmall)
+                        val totalDist = dayPlaces.sumOf { it.distanceFromPrevMeters }
+                        val stayCount = dayPlaces.count { it.isStayWithThreshold(stayThresholdMin) }
+                        Text(
+                            text = if (dayPlaces.isNotEmpty()) {
+                                "총 ${dayPlaces.size}곳 (체류 $stayCount · 경유 ${dayPlaces.size - stayCount})" +
+                                    if (totalDist > 0) " · 이동 ${DateUtils.formatDistanceKorean(totalDist)}" else ""
+                            } else {
+                                "선택 날짜 지도"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (dayPlaces.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { openAllPlacesInExternalMap(context, dayPlaces) },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                ) {
+                                    Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text("구글맵", style = MaterialTheme.typography.labelSmall)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        onOpenPlacesMap(
+                                            "${DateUtils.formatShortKoreanDate(selectedDateKey)} 이동 지도",
+                                            dayPlaces,
+                                        )
+                                    },
+                                    modifier = Modifier.size(30.dp),
+                                ) {
+                                    Icon(Icons.Default.OpenInFull, contentDescription = "지도 크게 보기", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
                     }
+
+                    PlacesInlineMapView(
+                        places = dayPlaces,
+                        stayThresholdMin = stayThresholdMin,
+                        focusIndex = focusedPinIdx,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp),
+                    )
                 }
             }
         }
 
-        if (recentVisits.isEmpty()) {
-            item(key = "recent_visits_empty") {
+        // 3. 선택한 날짜의 장소 상세 목록 (누르면 지도가 해당 위치 핀으로 포커싱)
+        item(key = "day_places_list_header") {
+            Text(
+                text = "${DateUtils.formatShortKoreanDate(selectedDateKey)} 방문 및 체류 장소 (${dayPlaces.size})",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        if (dayPlaces.isEmpty()) {
+            item(key = "day_places_empty") {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        text = "아직 기록된 위치가 없습니다. '자동 기록 시작'을 켜거나 사진 EXIF 위치가 포함된 날짜를 달력에서 눌러 보세요.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(18.dp),
+                    ) {
+                        Text(
+                            text = "선택한 날짜에 이동 · 체류 장소 기록이 없습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = { onRefreshDate(selectedDateKey) }) {
+                            Text("이 날 데이터 불러오기")
+                        }
+                    }
                 }
             }
         } else {
-            items(recentVisits, key = { it.id }) { visit ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = DateUtils.formatShortKoreanDate(visit.dateKey),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(start = 4.dp)
-                            .clickable { onOpenDate(visit.dateKey) },
-                    )
-                    PlaceVisitTimelineItem(
-                        visit = visit,
-                        isLast = true,
-                        stayThresholdMin = stayThresholdMin,
-                        onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
-                        onSaveAlias = { v -> aliasTargetVisit = v },
-                        onClassifyWithAi = onClassifyPlaceWithAi,
-                    )
-                }
+            items(dayPlaces.size, key = { idx -> "${dayPlaces[idx].id}_$idx" }) { idx ->
+                val visit = dayPlaces[idx]
+                PlaceVisitTimelineItem(
+                    visit = visit,
+                    isLast = idx == dayPlaces.lastIndex,
+                    stayThresholdMin = stayThresholdMin,
+                    onOpenMap = { focusedPinIdx = idx },
+                    onSaveAlias = { v -> aliasTargetVisit = v },
+                    onClassifyWithAi = onClassifyPlaceWithAi,
+                )
             }
         }
 
@@ -305,14 +304,41 @@ fun PlacesScreen(
         }
     }
 
+    if (showDatePicker) {
+        val todayUtcMillis = remember(todayKey) { DateUtils.dateKeyToUtcMillis(todayKey) }
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = DateUtils.dateKeyToUtcMillis(selectedDateKey),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis <= todayUtcMillis
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pickerState.selectedDateMillis?.let { ms ->
+                            onSelectDate(DateUtils.utcMillisToDateKey(ms))
+                        }
+                        showDatePicker = false
+                    },
+                ) { Text("확인") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("취소") }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
     val targetVisit = aliasTargetVisit
     if (targetVisit != null) {
         SavePlaceAliasDialog(
-            initialName = targetVisit.placeName,
-            address = targetVisit.address,
+            visit = targetVisit,
             onDismiss = { aliasTargetVisit = null },
-            onSave = { aliasName ->
-                onSaveAlias(aliasName, targetVisit)
+            onSave = { name ->
+                onSaveAlias(name, targetVisit)
                 aliasTargetVisit = null
             },
         )

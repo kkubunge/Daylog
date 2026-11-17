@@ -21,6 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -59,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DateScanLog
 import com.aiutil.daylog.model.DaylogSettings
 import com.aiutil.daylog.model.PermissionStatus
+import com.aiutil.daylog.model.SavedPlaceAlias
 import com.aiutil.daylog.model.ScheduledRunLog
 import com.aiutil.daylog.util.DateUtils
 
@@ -70,6 +74,7 @@ fun SettingsSheet(
     permissionStatus: PermissionStatus,
     isTrackingRunning: Boolean,
     isBatchScanning: Boolean,
+    aliases: List<SavedPlaceAlias> = emptyList(),
     scanLogsByDate: Map<String, DateScanLog> = emptyMap(),
     scheduledRuns: List<ScheduledRunLog> = emptyList(),
     onDismiss: () -> Unit,
@@ -77,6 +82,8 @@ fun SettingsSheet(
     onRequestBackgroundLocation: () -> Unit,
     onOpenNotificationListenerSettings: () -> Unit,
     onToggleTrackingService: () -> Unit,
+    onCheckInNow: () -> Unit = {},
+    onDeleteAlias: (aliasId: String) -> Unit = {},
     onBatchScanRange: (startDateKey: String, endDateKey: String) -> Unit,
     onRunScheduledScanNow: () -> Unit = {},
     onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
@@ -251,6 +258,64 @@ fun SettingsSheet(
                             checked = settings.extractPhotoGps,
                             onCheckedChange = { v -> onUpdateSettings { it.copy(extractPhotoGps = v) } },
                         )
+
+                        OutlinedButton(
+                            onClick = onCheckInNow,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("현재 위치 지금 기록")
+                        }
+                    }
+                }
+            }
+
+            // 2-2. 등록된 장소 이름 관리 (기존 이동 장소 탭에서 이동)
+            item(key = "aliases_card") {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "등록된 장소 이름 (${aliases.size})",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (aliases.isEmpty()) {
+                            Text(
+                                text = "아직 등록된 장소 이름이 없습니다. 장소 카드의 북마크 아이콘으로 집·회사 등을 지정할 수 있습니다.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            aliases.forEach { alias ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(alias.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            text = "반경 ${alias.radiusMeters}m 자동 매칭",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    IconButton(onClick = { onDeleteAlias(alias.id) }) {
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "장소 이름 삭제", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

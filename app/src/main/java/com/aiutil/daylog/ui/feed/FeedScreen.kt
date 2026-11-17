@@ -316,18 +316,6 @@ fun FeedScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-
-                        Row(
-                            horizontalArrangement = Arrangement.End,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            OutlinedButton(
-                                onClick = { onSelectDateInCalendar(rec.dateKey) },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text("달력에서 보기", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
                     }
                 }
             }
