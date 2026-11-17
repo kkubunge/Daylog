@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -101,7 +102,8 @@ fun CalendarScreen(
     onAddNote: (dateKey: String, title: String, detail: String) -> Unit,
     onDeleteNote: (dateKey: String, activityId: String) -> Unit,
     onSavePlaceAlias: (name: String, visit: PlaceVisit) -> Unit,
-    onPhotoClick: (DayPhoto) -> Unit,
+    onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
+    onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
     onOpenPermissions: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -555,6 +557,7 @@ fun CalendarScreen(
                         isLast = idx == places.lastIndex,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
+                        onClassifyWithAi = onClassifyPlaceWithAi,
                     )
                 }
             }
@@ -570,11 +573,11 @@ fun CalendarScreen(
                 }
                 item(key = "photos_strip") {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(photos, key = { it.uri }) { photo ->
+                        itemsIndexed(photos, key = { _, p -> p.uri }) { idx, photo ->
                             Column(
                                 modifier = Modifier
                                     .width(106.dp)
-                                    .clickable { onPhotoClick(photo) },
+                                    .clickable { onPhotoClick(photos, idx) },
                             ) {
                                 DaylogPhotoImage(
                                     uri = photo.uri,
@@ -590,9 +593,13 @@ fun CalendarScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                if (photo.placeLabel.isNotBlank()) {
+                                val locLabel = listOf(photo.cityName, photo.placeLabel)
+                                    .filter { it.isNotBlank() }
+                                    .distinct()
+                                    .joinToString(" · ")
+                                if (locLabel.isNotBlank()) {
                                     Text(
-                                        text = photo.placeLabel,
+                                        text = locLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,

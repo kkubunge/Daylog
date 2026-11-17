@@ -6,9 +6,12 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import com.aiutil.daylog.collector.SmsSpamFilter
+import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.AiSearchResult
 import com.aiutil.daylog.model.DayRecord
+import com.aiutil.daylog.model.PlaceCategory
+import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -174,6 +177,48 @@ class GeminiClient {
             ?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * 방문 장소의 GPS 좌표·주소·인접 결제/활동 단서를 바탕으로 주변 상호와 카테고리(식당·병원·카페·업무 등)를 추정한다.
+     */
+    suspend fun inferPlaceCategoryAndPoi(
+        visit: PlaceVisit,
+        activities: List<ActivityItem>,
+        apiKey: String,
+    ): Pair<PlaceCategory, String>? = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isEmpty()) return@withContext null
+
+        val nearbyActs = activities
+            .filter { act ->
+                kotlin.math.abs(act.timestampMs - visit.startMs) <= 90 * 60_000L ||
+                    act.timestampMs in visit.startMs..visit.endMs
+            }
+            .take(8)
+            .joinToString("\n") { "- ${DateUtils.formatTimeHm(it.timestampMs)} [${it.type.label}] ${it.title}: ${it.detail}" }
+
+        val prompt = """
+            아래 방문 장소의 좌표, 주소, 체류 시간, 같은 시간대 활동/결제 내역을 바탕으로 가장 가능성 높은 장소 카테고리와 추정 상호명을 알려줘.
+
+            카테고리 코드 (반드시 이 중 하나만 선택):
+            RESTAURANT(식당), CAFE(카페), HOSPITAL(병원), WORK(업무), HOME(집), SHOPPING(쇼핑), TRANSIT(이동), OUTDOOR(야외), GENERAL(기타)
+
+            반드시 JSON 객체로만 답해: {"category":"CAFE","poi":"추정 상호 또는 건물명"}
+
+            방문 정보:
+            - 도시: ${visit.cityName}
+            - 장소명: ${visit.placeName}
+            - 주소: ${visit.address}
+            - 좌표: ${visit.latitude}, ${visit.longitude}
+            - 체류: ${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} (${visit.durationMinutes}분)
+            - 주변 시간대 활동:
+            ${nearbyActs.ifBlank { "없음" }}
+        """.trimIndent()
+
+        val bodyJson = buildTextRequestBody(prompt, temperature = 0.1, jsonMime = true)
+        val raw = callGeminiGenerateContent(bodyJson, cleanKey) ?: return@withContext null
+        parsePlaceClassificationResponse(raw)
+    }
+
     private fun buildTextRequestBody(
         prompt: String,
         temperature: Double,
@@ -296,7 +341,10 @@ internal fun buildRecordsContext(records: List<DayRecord>, maxDays: Int = 40): S
                 append(
                     rec.places.joinToString(" -> ") { p ->
                         val stay = if (p.durationMinutes > 0) "(${DateUtils.formatStayMinutes(p.durationMinutes)})" else ""
-                        "${DateUtils.formatTimeHm(p.startMs)} ${p.placeName}$stay"
+                        val cityTag = if (p.cityName.isNotBlank()) "${p.cityName} " else ""
+                        val catTag = if (p.category != PlaceCategory.GENERAL) "[${p.category.label}]" else ""
+                        val poiTag = if (p.nearbyPoi.isNotBlank() && p.nearbyPoi != p.placeName) "(${p.nearbyPoi})" else ""
+                        "${DateUtils.formatTimeHm(p.startMs)} $cityTag${p.placeName}$poiTag$catTag$stay"
                     }
                 )
             }
@@ -341,4 +389,19 @@ internal fun parseSearchResponse(rawText: String): AiSearchResult? {
         }.orEmpty()
         if (answer.isBlank()) null else AiSearchResult(answer = answer, matchedDateKeys = keys.distinct())
     }.getOrNull() ?: AiSearchResult(answer = clean, matchedDateKeys = emptyList())
+}
+
+internal fun parsePlaceClassificationResponse(rawText: String): Pair<PlaceCategory, String>? {
+    val clean = rawText.trim()
+    val start = clean.indexOf('{')
+    val end = clean.lastIndexOf('}')
+    if (start < 0 || end <= start) return null
+    return runCatching {
+        val parser = Json { ignoreUnknownKeys = true }
+        val obj = parser.parseToJsonElement(clean.substring(start, end + 1)).jsonObject
+        val catCode = obj["category"]?.jsonPrimitive?.content?.trim().orEmpty().uppercase()
+        val poi = obj["poi"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val cat = PlaceCategory.entries.firstOrNull { it.name == catCode } ?: PlaceCategory.GENERAL
+        cat to poi
+    }.getOrNull()
 }

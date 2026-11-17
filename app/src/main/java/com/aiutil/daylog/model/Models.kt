@@ -62,6 +62,22 @@ enum class PlaceSource(val label: String) {
 }
 
 /**
+ * 방문 장소의 생활 카테고리 분류.
+ */
+@Serializable
+enum class PlaceCategory(val label: String) {
+    RESTAURANT("식당"),
+    CAFE("카페"),
+    HOSPITAL("병원"),
+    WORK("업무"),
+    HOME("집"),
+    SHOPPING("쇼핑"),
+    TRANSIT("이동"),
+    OUTDOOR("야외"),
+    GENERAL("기타"),
+}
+
+/**
  * 해당 일자에 촬영 또는 저장된 사진 및 EXIF GPS 메타데이터.
  */
 @Serializable
@@ -76,6 +92,7 @@ data class DayPhoto(
     val isScreenshot: Boolean = false,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val cityName: String = "",
     val placeLabel: String = "",
     val aiCaption: String = "",
 )
@@ -91,7 +108,10 @@ data class PlaceVisit(
     val endMs: Long,
     val latitude: Double,
     val longitude: Double,
+    val cityName: String = "",
     val placeName: String,
+    val nearbyPoi: String = "",
+    val category: PlaceCategory = PlaceCategory.GENERAL,
     val address: String = "",
     val source: PlaceSource = PlaceSource.GPS_TRACKER,
     val distanceFromPrevMeters: Int = 0,

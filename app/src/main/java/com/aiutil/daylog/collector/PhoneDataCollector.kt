@@ -163,7 +163,12 @@ class PhoneDataCollector(
 
             val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(key, photos, aliases)
             val gpsVisits = gpsMap[key].orEmpty()
-            val mergedPlaces: List<PlaceVisit> = PlaceVisitEngine.mergeDayPlaces(gpsVisits, photoVisits, aliases)
+            val mergedPlaces: List<PlaceVisit> = PlaceVisitEngine.mergeDayPlaces(
+                gpsVisits = gpsVisits,
+                photoVisits = photoVisits,
+                aliases = aliases,
+                nearbyActivities = mergedActivities,
+            )
 
             DayRecord(
                 dateKey = key,
@@ -248,6 +253,7 @@ class PhoneDataCollector(
 
                     var lat: Double? = null
                     var lng: Double? = null
+                    var cityName = ""
                     var placeLabel = ""
 
                     if (canReadExifLocation && !isShot && exifAnalyzedCount < MAX_EXIF_READ_PER_SCAN) {
@@ -256,7 +262,9 @@ class PhoneDataCollector(
                         if (latLng != null) {
                             lat = latLng.first
                             lng = latLng.second
-                            placeLabel = geocoder.reverseGeocode(lat, lng).placeName
+                            val geo = geocoder.reverseGeocode(lat, lng)
+                            cityName = geo.cityName
+                            placeLabel = geo.placeName
                         }
                     }
 
@@ -272,6 +280,7 @@ class PhoneDataCollector(
                             isScreenshot = isShot,
                             latitude = lat,
                             longitude = lng,
+                            cityName = cityName,
                             placeLabel = placeLabel,
                         )
                     )

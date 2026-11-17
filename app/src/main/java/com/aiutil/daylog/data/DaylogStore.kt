@@ -3,6 +3,7 @@ package com.aiutil.daylog.data
 import com.aiutil.daylog.location.PlaceVisitEngine
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.DayRecord
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.SavedPlaceAlias
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -124,10 +125,40 @@ class DaylogStore(private val file: File) {
     ) {
         val current = getRecord(dateKey) ?: DayRecord(dateKey = dateKey)
         val photoVisits = PlaceVisitEngine.buildPlacesFromPhotos(dateKey, current.photos, aliases)
-        val mergedPlaces = PlaceVisitEngine.mergeDayPlaces(gpsVisits, photoVisits, aliases)
+        val mergedPlaces = PlaceVisitEngine.mergeDayPlaces(
+            gpsVisits = gpsVisits,
+            photoVisits = photoVisits,
+            aliases = aliases,
+            nearbyActivities = current.activities,
+        )
         upsertRecord(
             current.copy(
                 places = mergedPlaces,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    fun updatePlaceClassification(
+        dateKey: String,
+        placeId: String,
+        category: PlaceCategory,
+        nearbyPoi: String,
+    ) {
+        val current = getRecord(dateKey) ?: return
+        val updatedPlaces = current.places.map { visit ->
+            if (visit.id == placeId) {
+                visit.copy(
+                    category = category,
+                    nearbyPoi = nearbyPoi.trim(),
+                )
+            } else {
+                visit
+            }
+        }
+        upsertRecord(
+            current.copy(
+                places = updatedPlaces,
                 updatedAtMs = System.currentTimeMillis(),
             )
         )

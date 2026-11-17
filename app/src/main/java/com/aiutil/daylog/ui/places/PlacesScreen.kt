@@ -57,6 +57,7 @@ fun PlacesScreen(
     onToggleTracking: () -> Unit,
     onCheckInNow: () -> Unit,
     onSaveAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onDeleteAlias: (aliasId: String) -> Unit,
     onOpenDate: (String) -> Unit,
 ) {
@@ -271,6 +272,7 @@ fun PlacesScreen(
                         isLast = true,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
+                        onClassifyWithAi = onClassifyPlaceWithAi,
                     )
                 }
             }

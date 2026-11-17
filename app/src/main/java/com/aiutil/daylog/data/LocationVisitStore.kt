@@ -55,6 +55,9 @@ class LocationVisitStore(
         placeName: String,
         address: String,
         source: PlaceSource = PlaceSource.GPS_TRACKER,
+        cityName: String = "",
+        nearbyPoi: String = "",
+        osmCategoryHint: String = "",
     ): List<PlaceVisit> {
         synchronized(lock) {
             val currentAll = _visits.value
@@ -70,6 +73,9 @@ class LocationVisitStore(
                 address = address,
                 aliases = _aliases.value,
                 source = source,
+                cityName = cityName,
+                nearbyPoi = nearbyPoi,
+                osmCategoryHint = osmCategoryHint,
             )
             val merged = (others + updatedDay)
                 .sortedByDescending { it.startMs }

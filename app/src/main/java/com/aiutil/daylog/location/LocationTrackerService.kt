@@ -150,6 +150,9 @@ class LocationTrackerService : Service() {
                 longitude = location.longitude,
                 placeName = geo.placeName,
                 address = geo.address,
+                cityName = geo.cityName,
+                nearbyPoi = geo.nearbyPoi,
+                osmCategoryHint = geo.osmCategoryHint,
             )
             // 오늘 기록이 이미 열려 있으면 장소 목록도 즉시 갱신
             App.daylogs.updatePlacesForDate(

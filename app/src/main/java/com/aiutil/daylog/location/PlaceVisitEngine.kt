@@ -1,6 +1,8 @@
 package com.aiutil.daylog.location
 
+import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceSource
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.model.SavedPlaceAlias
@@ -9,7 +11,7 @@ import kotlin.math.roundToInt
 
 /**
  * GPS 수신 포인트 및 사진 EXIF 위치 메타데이터를 분석해
- * 하루 동안 이동하며 머물렀던 장소 타임라인을 구성한다.
+ * 하루 동안 이동하며 머물렀던 장소, 도시명, 카테고리(식당·병원·카페·업무)를 구성한다.
  */
 object PlaceVisitEngine {
 
@@ -44,6 +46,9 @@ object PlaceVisitEngine {
         aliases: List<SavedPlaceAlias> = emptyList(),
         source: PlaceSource = PlaceSource.GPS_TRACKER,
         stayRadiusMeters: Double = DEFAULT_STAY_RADIUS_M,
+        cityName: String = "",
+        nearbyPoi: String = "",
+        osmCategoryHint: String = "",
     ): List<PlaceVisit> {
         val sorted = existingVisits.sortedBy { it.startMs }.toMutableList()
         val matchedAlias = resolveAlias(latitude, longitude, aliases)
@@ -54,10 +59,26 @@ object PlaceVisitEngine {
         if (last != null && source == PlaceSource.GPS_TRACKER && last.source == PlaceSource.GPS_TRACKER) {
             val dist = GeoUtils.distanceMeters(last.latitude, last.longitude, latitude, longitude)
             if (dist <= stayRadiusMeters) {
+                val mergedName = matchedAlias?.name ?: last.placeName.ifBlank { resolvedName }
+                val mergedAddress = last.address.ifBlank { address }
+                val mergedCity = last.cityName.ifBlank { cityName }
+                val mergedPoi = last.nearbyPoi.ifBlank { nearbyPoi }
+                val updatedEnd = maxOf(last.endMs, timestampMs)
+                val classified = PlaceClassifier.classify(
+                    placeName = mergedName,
+                    address = mergedAddress,
+                    nearbyPoi = mergedPoi,
+                    osmCategoryHint = osmCategoryHint,
+                    startMs = last.startMs,
+                    endMs = updatedEnd,
+                )
                 val updatedLast = last.copy(
-                    endMs = maxOf(last.endMs, timestampMs),
-                    placeName = matchedAlias?.name ?: last.placeName.ifBlank { resolvedName },
-                    address = last.address.ifBlank { address },
+                    endMs = updatedEnd,
+                    cityName = mergedCity,
+                    placeName = mergedName,
+                    nearbyPoi = classified.nearbyPoi,
+                    category = if (last.category != PlaceCategory.GENERAL) last.category else classified.category,
+                    address = mergedAddress,
                     sampleCount = last.sampleCount + 1,
                 )
                 sorted[sorted.lastIndex] = updatedLast
@@ -71,6 +92,15 @@ object PlaceVisitEngine {
             0
         }
 
+        val classified = PlaceClassifier.classify(
+            placeName = resolvedName,
+            address = address,
+            nearbyPoi = nearbyPoi,
+            osmCategoryHint = osmCategoryHint,
+            startMs = timestampMs,
+            endMs = timestampMs,
+        )
+
         val newVisit = PlaceVisit(
             id = "place_${source.name}_${timestampMs}_${sorted.size}",
             dateKey = dateKey,
@@ -78,7 +108,10 @@ object PlaceVisitEngine {
             endMs = timestampMs,
             latitude = latitude,
             longitude = longitude,
+            cityName = cityName,
             placeName = resolvedName,
+            nearbyPoi = classified.nearbyPoi,
+            category = classified.category,
             address = address,
             source = source,
             distanceFromPrevMeters = prevDistance,
@@ -128,6 +161,7 @@ object PlaceVisitEngine {
             val lat = first.latitude!!
             val lng = first.longitude!!
             val alias = resolveAlias(lat, lng, aliases)
+            val city = cluster.firstNotNullOfOrNull { it.cityName.takeIf(String::isNotBlank) }.orEmpty()
             val label = alias?.name
                 ?: cluster.firstNotNullOfOrNull { it.placeLabel.takeIf(String::isNotBlank) }
                 ?: GeoUtils.formatCoordFallback(lat, lng)
@@ -139,6 +173,14 @@ object PlaceVisitEngine {
                 0
             }
 
+            val classified = PlaceClassifier.classify(
+                placeName = label,
+                address = first.placeLabel,
+                nearbyPoi = if (alias == null) first.placeLabel else "",
+                startMs = first.dateTakenMs,
+                endMs = last.dateTakenMs,
+            )
+
             visits.add(
                 PlaceVisit(
                     id = "photo_place_${dateKey}_$idx",
@@ -147,7 +189,10 @@ object PlaceVisitEngine {
                     endMs = last.dateTakenMs,
                     latitude = lat,
                     longitude = lng,
+                    cityName = city,
                     placeName = label,
+                    nearbyPoi = classified.nearbyPoi,
+                    category = classified.category,
                     address = first.placeLabel,
                     source = PlaceSource.PHOTO_EXIF,
                     distanceFromPrevMeters = distFromPrev,
@@ -159,12 +204,14 @@ object PlaceVisitEngine {
     }
 
     /**
-     * 실시간 GPS 기록과 사진 EXIF 기반 장소를 중복 없이 병합하고 이동 거리를 재계산한다.
+     * 실시간 GPS 기록과 사진 EXIF 기반 장소를 중복 없이 병합하고,
+     * 같은 시간대의 결제/메모 단서와 사용자 별칭을 반영해 카테고리·상호·이동거리를 정밀 보정한다.
      */
     fun mergeDayPlaces(
         gpsVisits: List<PlaceVisit>,
         photoVisits: List<PlaceVisit>,
         aliases: List<SavedPlaceAlias> = emptyList(),
+        nearbyActivities: List<ActivityItem> = emptyList(),
     ): List<PlaceVisit> {
         val combined = gpsVisits.toMutableList()
         for (pv in photoVisits) {
@@ -181,14 +228,27 @@ object PlaceVisitEngine {
         val sorted = combined.sortedBy { it.startMs }
         return sorted.mapIndexed { idx, visit ->
             val alias = resolveAlias(visit.latitude, visit.longitude, aliases)
+            val resolvedName = alias?.name ?: visit.placeName
             val dist = if (idx == 0) {
                 0
             } else {
                 val prev = sorted[idx - 1]
                 GeoUtils.distanceMeters(prev.latitude, prev.longitude, visit.latitude, visit.longitude).roundToInt()
             }
+
+            val classified = PlaceClassifier.classify(
+                placeName = resolvedName,
+                address = visit.address,
+                nearbyPoi = visit.nearbyPoi,
+                startMs = visit.startMs,
+                endMs = visit.endMs,
+                nearbyActivities = nearbyActivities,
+            )
+
             visit.copy(
-                placeName = alias?.name ?: visit.placeName,
+                placeName = resolvedName,
+                nearbyPoi = visit.nearbyPoi.ifBlank { classified.nearbyPoi },
+                category = if (visit.category != PlaceCategory.GENERAL) visit.category else classified.category,
                 distanceFromPrevMeters = dist,
             )
         }

@@ -24,12 +24,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
@@ -51,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,10 +74,12 @@ import com.aiutil.daylog.collector.SmsSpamFilter
 import com.aiutil.daylog.model.ActivityItem
 import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.util.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -123,17 +130,24 @@ fun DaylogPhotoImage(
 }
 
 /**
- * 사진을 탭했을 때 촬영 시각과 위치 정보와 함께 크게 보는 모달 다이얼로그.
+ * 사진을 탭했을 때 크게 보며 좌우 스와이프(스왑)로 다른 사진을 넘길 수 있는 라이트박스 다이얼로그.
  */
 @Composable
 fun PhotoLightboxDialog(
-    photo: DayPhoto,
+    photos: List<DayPhoto>,
+    initialIndex: Int,
     hasGeminiKey: Boolean = false,
     isAnalyzing: Boolean = false,
-    onAnalyzePhoto: (() -> Unit)? = null,
+    onAnalyzePhoto: ((DayPhoto) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
+    if (photos.isEmpty()) return
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val safeInitial = initialIndex.coerceIn(0, photos.lastIndex)
+    val pagerState = rememberPagerState(initialPage = safeInitial, pageCount = { photos.size })
+    val currentPhoto = photos[pagerState.currentPage.coerceIn(0, photos.lastIndex)]
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -141,41 +155,94 @@ fun PhotoLightboxDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.94f))
+                .background(Color.Black.copy(alpha = 0.95f))
                 .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
         ) {
-            var fullBitmap by remember(photo.uri) { mutableStateOf<ImageBitmap?>(null) }
-            LaunchedEffect(photo.uri) {
-                fullBitmap = withContext(Dispatchers.IO) {
-                    PhotoImageCache.load(context, photo.uri, 1600)
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                val pagePhoto = photos[page]
+                var fullBitmap by remember(pagePhoto.uri) { mutableStateOf<ImageBitmap?>(null) }
+                LaunchedEffect(pagePhoto.uri) {
+                    fullBitmap = withContext(Dispatchers.IO) {
+                        PhotoImageCache.load(context, pagePhoto.uri, 1600)
+                    }
+                }
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val loaded = fullBitmap
+                    if (loaded != null) {
+                        Image(
+                            bitmap = loaded,
+                            contentDescription = pagePhoto.displayName,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp, vertical = 72.dp),
+                        )
+                    }
                 }
             }
-            val loaded = fullBitmap
-            if (loaded != null) {
-                Image(
-                    bitmap = loaded,
-                    contentDescription = photo.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 64.dp),
-                )
-            }
 
-            IconButton(
-                onClick = onDismiss,
+            // 상단 페이지 표시 & 좌우 이동 버튼 · 닫기 버튼
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .background(Color.White.copy(alpha = 0.14f), CircleShape),
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
             ) {
-                Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
+                Surface(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(999.dp),
+                ) {
+                    Text(
+                        text = "${pagerState.currentPage + 1} / ${photos.size}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (photos.size > 1) {
+                        IconButton(
+                            onClick = {
+                                val prev = (pagerState.currentPage - 1).coerceAtLeast(0)
+                                scope.launch { pagerState.animateScrollToPage(prev) }
+                            },
+                            enabled = pagerState.currentPage > 0,
+                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                        ) {
+                            Icon(Icons.Default.ChevronLeft, contentDescription = "이전 사진", tint = Color.White)
+                        }
+                        IconButton(
+                            onClick = {
+                                val next = (pagerState.currentPage + 1).coerceAtMost(photos.lastIndex)
+                                scope.launch { pagerState.animateScrollToPage(next) }
+                            },
+                            enabled = pagerState.currentPage < photos.lastIndex,
+                            modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                        ) {
+                            Icon(Icons.Default.ChevronRight, contentDescription = "다음 사진", tint = Color.White)
+                        }
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.background(Color.White.copy(alpha = 0.14f), CircleShape),
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = Color.White)
+                    }
+                }
             }
 
-            // 하단 촬영 시각 · 장소 · AI 분석 바
+            // 하단 촬영 시각 · 도시/장소 · AI 분석 바
             Surface(
-                color = Color.Black.copy(alpha = 0.76f),
+                color = Color.Black.copy(alpha = 0.78f),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -191,14 +258,18 @@ fun PhotoLightboxDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "${DateUtils.formatTimeHm(photo.dateTakenMs)} · ${photo.folderName.ifBlank { photo.displayName }}",
+                                text = "${DateUtils.formatTimeHm(currentPhoto.dateTakenMs)} · ${currentPhoto.folderName.ifBlank { currentPhoto.displayName }}",
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelLarge,
                             )
-                            if (photo.placeLabel.isNotBlank()) {
+                            val locText = listOf(currentPhoto.cityName, currentPhoto.placeLabel)
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .joinToString(" · ")
+                            if (locText.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "위치: ${photo.placeLabel}",
+                                    text = "위치: $locText",
                                     color = Color.White.copy(alpha = 0.8f),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
@@ -207,7 +278,7 @@ fun PhotoLightboxDialog(
 
                         if (onAnalyzePhoto != null) {
                             TextButton(
-                                onClick = onAnalyzePhoto,
+                                onClick = { onAnalyzePhoto(currentPhoto) },
                                 enabled = !isAnalyzing,
                             ) {
                                 if (isAnalyzing) {
@@ -226,7 +297,7 @@ fun PhotoLightboxDialog(
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (photo.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
+                                    text = if (currentPhoto.aiCaption.isBlank()) "AI 내용 읽기" else "다시 읽기",
                                     color = if (hasGeminiKey) Color.White else Color.White.copy(alpha = 0.7f),
                                     style = MaterialTheme.typography.labelSmall,
                                 )
@@ -234,10 +305,10 @@ fun PhotoLightboxDialog(
                         }
                     }
 
-                    if (photo.aiCaption.isNotBlank()) {
+                    if (currentPhoto.aiCaption.isNotBlank()) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = photo.aiCaption,
+                            text = currentPhoto.aiCaption,
                             color = Color.White.copy(alpha = 0.92f),
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -250,6 +321,7 @@ fun PhotoLightboxDialog(
 
 /**
  * 이동 및 체류 장소 타임라인 카드.
+ * 방문 도시 이름, 추정 주변 상호, 카테고리(식당·병원·카페·업무 등)를 함께 보여준다.
  */
 @Composable
 fun PlaceVisitTimelineItem(
@@ -257,6 +329,7 @@ fun PlaceVisitTimelineItem(
     isLast: Boolean,
     onOpenMap: (PlaceVisit) -> Unit,
     onSaveAlias: (PlaceVisit) -> Unit,
+    onClassifyWithAi: ((PlaceVisit) -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (visit.distanceFromPrevMeters > 0) {
@@ -310,19 +383,53 @@ fun PlaceVisitTimelineItem(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    val timeText = if (visit.endMs > visit.startMs + 60_000L) {
-                        "${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} · ${DateUtils.formatStayMinutes(visit.durationMinutes)}"
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val timeText = if (visit.endMs > visit.startMs + 60_000L) {
+                            "${DateUtils.formatTimeHm(visit.startMs)} ~ ${DateUtils.formatTimeHm(visit.endMs)} · ${DateUtils.formatStayMinutes(visit.durationMinutes)}"
+                        } else {
+                            "${DateUtils.formatTimeHm(visit.startMs)} · ${visit.source.label}"
+                        }
+                        Text(
+                            text = timeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f, fill = false),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+
+                        // 도시 이름 + 장소 카테고리 배지
+                        val cityCategoryBadge = buildList {
+                            if (visit.cityName.isNotBlank()) add(visit.cityName)
+                            if (visit.category != PlaceCategory.GENERAL) add(visit.category.label)
+                        }.joinToString(" · ")
+                        if (cityCategoryBadge.isNotBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(6.dp),
+                            ) {
+                                Text(
+                                    text = cityCategoryBadge,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
+                    val mainTitle = if (visit.nearbyPoi.isNotBlank() && !visit.placeName.contains(visit.nearbyPoi)) {
+                        "${visit.nearbyPoi} · ${visit.placeName}"
                     } else {
-                        "${DateUtils.formatTimeHm(visit.startMs)} · ${visit.source.label}"
+                        visit.placeName
                     }
                     Text(
-                        text = timeText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = visit.placeName,
+                        text = mainTitle,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -339,26 +446,39 @@ fun PlaceVisitTimelineItem(
                     }
                 }
 
+                if (onClassifyWithAi != null) {
+                    IconButton(
+                        onClick = { onClassifyWithAi(visit) },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "AI 주변 상호 추정",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
                 IconButton(
                     onClick = { onSaveAlias(visit) },
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Default.BookmarkAdd,
                         contentDescription = "장소 이름 저장",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(17.dp),
                     )
                 }
                 IconButton(
                     onClick = { onOpenMap(visit) },
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(32.dp),
                 ) {
                     Icon(
                         imageVector = Icons.Default.Map,
                         contentDescription = "지도에서 보기",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(17.dp),
                     )
                 }
             }

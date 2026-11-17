@@ -78,6 +78,12 @@ data class SharedIncomingPayload(
     val imageUris: List<String>,
 )
 
+private data class LightboxState(
+    val dateKey: String,
+    val photos: List<DayPhoto>,
+    val initialIndex: Int,
+)
+
 private enum class DaylogTab(val label: String) {
     CALENDAR("달력"),
     FEED("전체 기록"),
@@ -110,7 +116,7 @@ fun AppRoot(
     var selectedDateKey by rememberSaveable { mutableStateOf(todayKey) }
     var detailSheetDateKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    var lightboxTarget by remember { mutableStateOf<Pair<String, DayPhoto>?>(null) }
+    var lightboxState by remember { mutableStateOf<LightboxState?>(null) }
     var isScanning by remember { mutableStateOf(false) }
     var isAiBusy by remember { mutableStateOf(false) }
     var aiSearchResult by remember { mutableStateOf<AiSearchResult?>(null) }
@@ -200,6 +206,9 @@ fun AppRoot(
                     placeName = geo.placeName,
                     address = geo.address,
                     source = PlaceSource.CHECK_IN,
+                    cityName = geo.cityName,
+                    nearbyPoi = geo.nearbyPoi,
+                    osmCategoryHint = geo.osmCategoryHint,
                 )
                 App.daylogs.updatePlacesForDate(targetDateKey, updatedVisits, aliases)
                 snackbarHostState.showSnackbar("위치 기록됨: ${geo.placeName}")
@@ -272,7 +281,7 @@ fun AppRoot(
 
     fun analyzeTargetPhoto(dateKey: String, photo: DayPhoto) {
         if (!hasGeminiKey) {
-            lightboxTarget = null
+            lightboxState = null
             showSettings = true
             scope.launch { snackbarHostState.showSnackbar("설정에서 Gemini API 키를 먼저 입력해 주세요.") }
             return
@@ -284,9 +293,39 @@ fun AppRoot(
                 val caption = App.gemini.analyzePhoto(context, photo.uri, settings.geminiApiKey)
                 if (caption != null) {
                     App.daylogs.updatePhotoAiCaption(dateKey, photo.uri, caption)
-                    lightboxTarget = dateKey to photo.copy(aiCaption = caption)
+                    lightboxState = lightboxState?.let { cur ->
+                        val updatedList = cur.photos.map { p ->
+                            if (p.uri == photo.uri) p.copy(aiCaption = caption) else p
+                        }
+                        cur.copy(photos = updatedList)
+                    }
                 } else {
                     snackbarHostState.showSnackbar("사진 분석에 실패했습니다. API 키와 네트워크를 확인해 주세요.")
+                }
+            } finally {
+                isAiBusy = false
+            }
+        }
+    }
+
+    fun classifyPlaceWithAi(visit: PlaceVisit) {
+        if (!hasGeminiKey) {
+            showSettings = true
+            scope.launch { snackbarHostState.showSnackbar("AI 주변 상호 추정을 쓰려면 Gemini API 키를 먼저 입력해 주세요.") }
+            return
+        }
+        if (isAiBusy) return
+        scope.launch {
+            isAiBusy = true
+            try {
+                val dayActs = App.daylogs.getRecord(visit.dateKey)?.activities.orEmpty()
+                val res = App.gemini.inferPlaceCategoryAndPoi(visit, dayActs, settings.geminiApiKey)
+                if (res != null) {
+                    App.daylogs.updatePlaceClassification(visit.dateKey, visit.id, res.first, res.second)
+                    val label = listOf(res.second, res.first.label).filter { it.isNotBlank() }.joinToString(" · ")
+                    snackbarHostState.showSnackbar("장소 추정: $label")
+                } else {
+                    snackbarHostState.showSnackbar("주변 상호 추정에 실패했습니다. API 키와 네트워크를 확인해 주세요.")
                 }
             } finally {
                 isAiBusy = false
@@ -468,7 +507,8 @@ fun AppRoot(
                         App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
                         scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
                     },
-                    onPhotoClick = { photo -> lightboxTarget = selectedDateKey to photo },
+                    onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
+                    onPhotoClick = { photos, idx -> lightboxState = LightboxState(selectedDateKey, photos, idx) },
                     onOpenPermissions = { showSettings = true },
                 )
 
@@ -499,6 +539,7 @@ fun AppRoot(
                         App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
                         scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
                     },
+                    onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
                     onDeleteAlias = { aliasId -> App.locationVisits.deleteAlias(aliasId) },
                     onOpenDate = { dateKey ->
                         selectAndLoadDate(dateKey)
@@ -542,11 +583,12 @@ fun AppRoot(
                 App.daylogs.refreshAliasesAcrossRecords(App.locationVisits.aliases.value)
                 scope.launch { snackbarHostState.showSnackbar("장소 이름 '${name}'을 저장했습니다.") }
             },
+            onClassifyPlaceWithAi = { visit -> classifyPlaceWithAi(visit) },
             onDeleteRecord = {
                 App.daylogs.deleteRecord(sheetDate)
                 detailSheetDateKey = null
             },
-            onPhotoClick = { photo -> lightboxTarget = sheetDate to photo },
+            onPhotoClick = { photos, idx -> lightboxState = LightboxState(sheetDate, photos, idx) },
         )
     }
 
@@ -577,14 +619,15 @@ fun AppRoot(
         )
     }
 
-    val targetLightbox = lightboxTarget
-    if (targetLightbox != null) {
+    val curLightbox = lightboxState
+    if (curLightbox != null) {
         PhotoLightboxDialog(
-            photo = targetLightbox.second,
+            photos = curLightbox.photos,
+            initialIndex = curLightbox.initialIndex,
             hasGeminiKey = hasGeminiKey,
             isAnalyzing = isAiBusy,
-            onAnalyzePhoto = { analyzeTargetPhoto(targetLightbox.first, targetLightbox.second) },
-            onDismiss = { lightboxTarget = null },
+            onAnalyzePhoto = { targetPhoto -> analyzeTargetPhoto(curLightbox.dateKey, targetPhoto) },
+            onDismiss = { lightboxState = null },
         )
     }
 }

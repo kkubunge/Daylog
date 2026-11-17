@@ -79,8 +79,9 @@ fun DayDetailSheet(
     onAddActivityNote: (title: String, detail: String) -> Unit,
     onDeleteActivity: (activityId: String) -> Unit,
     onSavePlaceAlias: (name: String, visit: PlaceVisit) -> Unit,
+    onClassifyPlaceWithAi: (PlaceVisit) -> Unit,
     onDeleteRecord: () -> Unit,
-    onPhotoClick: (DayPhoto) -> Unit,
+    onPhotoClick: (photos: List<DayPhoto>, index: Int) -> Unit,
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -179,6 +180,7 @@ fun DayDetailSheet(
                         isLast = idx == current.places.lastIndex,
                         onOpenMap = { v -> openLocationInMap(context, v.latitude, v.longitude, v.placeName) },
                         onSaveAlias = { v -> aliasTargetVisit = v },
+                        onClassifyWithAi = onClassifyPlaceWithAi,
                     )
                 }
             }
@@ -199,11 +201,12 @@ fun DayDetailSheet(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        rowPhotos.forEach { photo ->
+                        rowPhotos.forEachIndexed { colIdx, photo ->
+                            val flatIndex = rowIdx * 3 + colIdx
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clickable { onPhotoClick(photo) },
+                                    .clickable { onPhotoClick(current.photos, flatIndex) },
                             ) {
                                 DaylogPhotoImage(
                                     uri = photo.uri,
