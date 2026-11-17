@@ -99,7 +99,7 @@ private object OsmTileLoader {
         .build()
 
     private val semaphore = Semaphore(4)
-    private val cache = object : LruCache<String, ImageBitmap>(180) {}
+    private val cache = object : LruCache<String, ImageBitmap>(250) {}
     private val failedKeys = mutableSetOf<String>()
 
     fun getCached(z: Int, x: Int, y: Int): ImageBitmap? = cache.get("$z/$x/$y")
@@ -118,8 +118,8 @@ private object OsmTileLoader {
         semaphore.withPermit {
             cache.get(key)?.let { return@withPermit it }
             val urls = listOf(
-                "https://a.basemaps.cartocdn.com/rastertiles/voyager/$z/$wrappedX/$y.png",
                 "https://tile.openstreetmap.org/$z/$wrappedX/$y.png",
+                "https://a.tile.openstreetmap.fr/osmfr/$z/$wrappedX/$y.png",
             )
             for (url in urls) {
                 val bmp = runCatching {
@@ -130,6 +130,7 @@ private object OsmTileLoader {
                     httpClient.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) return@use null
                         val bytes = resp.body?.bytes() ?: return@use null
+                        if (bytes.size < 200) return@use null
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                     }
                 }.getOrNull()
