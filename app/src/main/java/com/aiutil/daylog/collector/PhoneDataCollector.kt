@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.aiutil.daylog.data.LocationVisitStore
 import com.aiutil.daylog.data.SnsCaptureStore
+import com.aiutil.daylog.location.GeoUtils
 import com.aiutil.daylog.location.GeocodingHelper
 import com.aiutil.daylog.location.PlaceVisitEngine
 import com.aiutil.daylog.model.ActivityItem
@@ -21,6 +22,7 @@ import com.aiutil.daylog.model.ActivityType
 import com.aiutil.daylog.model.DayPhoto
 import com.aiutil.daylog.model.DayRecord
 import com.aiutil.daylog.model.DaylogSettings
+import com.aiutil.daylog.model.PlaceCategory
 import com.aiutil.daylog.model.PlaceVisit
 import com.aiutil.daylog.util.DateUtils
 import kotlinx.coroutines.Dispatchers
@@ -201,14 +203,14 @@ class PhoneDataCollector(
                 } else {
                     val matchedPrev = prevPlaces.firstOrNull { prev ->
                         prev.nearbyPoi.isNotBlank() &&
-                            (prev.id == visit.id || PlaceVisitEngine.distanceMeters(
+                            (prev.id == visit.id || GeoUtils.distanceMeters(
                                 prev.latitude, prev.longitude, visit.latitude, visit.longitude
                             ) <= 150.0)
                     }
                     if (matchedPrev != null) {
                         visit.copy(
                             nearbyPoi = matchedPrev.nearbyPoi,
-                            category = if (visit.category == com.aiutil.daylog.model.PlaceCategory.GENERAL) matchedPrev.category else visit.category,
+                            category = if (visit.category == PlaceCategory.GENERAL) matchedPrev.category else visit.category,
                         )
                     } else {
                         visit
