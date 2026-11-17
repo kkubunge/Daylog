@@ -4,6 +4,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * minSdk 24 환경에서 안전하게 동작하는 날짜/시간/거리 포맷 유틸리티.
@@ -52,6 +53,59 @@ object DateUtils {
         val cal = parseCalendar(baseKey)
         cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
         return dateKeyFromMs(cal.timeInMillis)
+    }
+
+    /**
+     * 시작일~종료일(포함) 사이의 모든 날짜 키(yyyy-MM-dd) 목록을 최신순으로 반환한다.
+     */
+    fun dateKeysBetween(startKey: String, endKey: String, maxDays: Int = 180): List<String> {
+        val a = parseCalendar(startKey)
+        val b = parseCalendar(endKey)
+        val (fromCal, toCal) = if (a.timeInMillis <= b.timeInMillis) a to b else b to a
+
+        val result = mutableListOf<String>()
+        val cursor = toCal.clone() as Calendar
+        while (cursor.timeInMillis >= fromCal.timeInMillis && result.size < maxDays) {
+            result += dateKeyFromMs(cursor.timeInMillis)
+            cursor.add(Calendar.DAY_OF_YEAR, -1)
+        }
+        return result
+    }
+
+    fun startOfMonthKey(baseKey: String, monthsAgo: Int = 0): String {
+        val cal = parseCalendar(baseKey)
+        cal.add(Calendar.MONTH, -monthsAgo)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        return dateKeyFromMs(cal.timeInMillis)
+    }
+
+    fun endOfMonthKey(baseKey: String, monthsAgo: Int = 0): String {
+        val cal = parseCalendar(baseKey)
+        cal.add(Calendar.MONTH, -monthsAgo)
+        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        return dateKeyFromMs(cal.timeInMillis)
+    }
+
+    /**
+     * Material3 DateRangePicker용 UTC 자정 밀리초 변환 (로컬 타임존 날짜 오차 방지).
+     */
+    fun dateKeyToUtcMillis(dateKey: String): Long {
+        val parts = dateKey.split("-")
+        val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        val local = parseCalendar(dateKey)
+        val year = parts.getOrNull(0)?.toIntOrNull() ?: local.get(Calendar.YEAR)
+        val month0 = (parts.getOrNull(1)?.toIntOrNull()?.minus(1)) ?: local.get(Calendar.MONTH)
+        val day = parts.getOrNull(2)?.toIntOrNull() ?: local.get(Calendar.DAY_OF_MONTH)
+        utc.set(year, month0, day, 0, 0, 0)
+        utc.set(Calendar.MILLISECOND, 0)
+        return utc.timeInMillis
+    }
+
+    fun utcMillisToDateKey(utcMillis: Long): String {
+        val sdf = SimpleDateFormat(DATE_FORMAT, Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        return sdf.format(Date(utcMillis))
     }
 
     fun formatKoreanDate(dateKey: String): String {

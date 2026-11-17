@@ -1,6 +1,8 @@
 package com.aiutil.daylog.ui.settings
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,15 +14,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -30,10 +36,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,10 +56,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aiutil.daylog.model.DaylogSettings
 import com.aiutil.daylog.model.PermissionStatus
+import com.aiutil.daylog.util.DateUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(
+    todayKey: String,
     settings: DaylogSettings,
     permissionStatus: PermissionStatus,
     isTrackingRunning: Boolean,
@@ -61,13 +71,16 @@ fun SettingsSheet(
     onRequestBackgroundLocation: () -> Unit,
     onOpenNotificationListenerSettings: () -> Unit,
     onToggleTrackingService: () -> Unit,
-    onBatchScanDays: (days: Int) -> Unit,
+    onBatchScanRange: (startDateKey: String, endDateKey: String) -> Unit,
     onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
     onExportJsonBackup: () -> Unit,
     onClearAllRecords: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showClearAllConfirm by remember { mutableStateOf(false) }
+    var showRangePicker by remember { mutableStateOf(false) }
+    var batchStartKey by remember(todayKey) { mutableStateOf(DateUtils.daysAgoKey(todayKey, 6)) }
+    var batchEndKey by remember(todayKey) { mutableStateOf(todayKey) }
     var apiKeyDraft by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
     var showApiKey by remember { mutableStateOf(false) }
 
@@ -258,28 +271,110 @@ fun SettingsSheet(
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-                        Text("과거 날짜 한꺼번에 불러오기", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                        Text("과거 날짜 상세 불러오기", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "원하는 시작일·종료일을 직접 고르거나 빠른 기간을 선택해 한꺼번에 스캔합니다 (최대 180일).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        val presets = remember(todayKey) {
+                            listOf(
+                                "최근 7일" to (DateUtils.daysAgoKey(todayKey, 6) to todayKey),
+                                "최근 30일" to (DateUtils.daysAgoKey(todayKey, 29) to todayKey),
+                                "이번 달" to (DateUtils.startOfMonthKey(todayKey, 0) to todayKey),
+                                "지난 달" to (DateUtils.startOfMonthKey(todayKey, 1) to DateUtils.endOfMonthKey(todayKey, 1)),
+                                "최근 90일" to (DateUtils.daysAgoKey(todayKey, 89) to todayKey),
+                            )
+                        }
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Button(
-                                onClick = { onBatchScanDays(7) },
-                                enabled = !isBatchScanning,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                if (isBatchScanning) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                } else {
-                                    Text("최근 7일 스캔")
-                                }
+                            presets.forEach { (label, range) ->
+                                val isSelected = batchStartKey == range.first && batchEndKey == range.second
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        batchStartKey = range.first
+                                        batchEndKey = range.second
+                                    },
+                                    label = { Text(label) },
+                                )
                             }
-                            OutlinedButton(
-                                onClick = { onBatchScanDays(30) },
-                                enabled = !isBatchScanning,
-                                modifier = Modifier.weight(1f),
+                            FilterChip(
+                                selected = presets.none { it.second.first == batchStartKey && it.second.second == batchEndKey },
+                                onClick = { showRangePicker = true },
+                                label = { Text("직접 선택") },
+                            )
+                        }
+
+                        val selectedDaysCount = remember(batchStartKey, batchEndKey) {
+                            DateUtils.dateKeysBetween(batchStartKey, batchEndKey, maxDays = 180).size
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showRangePicker = true },
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             ) {
-                                Text("최근 30일 스캔")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DateRange,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "$batchStartKey ~ $batchEndKey",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            text = "총 ${selectedDaysCount}일간 데이터 스캔 (눌러서 날짜 변경)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "달력",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = { onBatchScanRange(batchStartKey, batchEndKey) },
+                            enabled = !isBatchScanning && selectedDaysCount > 0,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (isBatchScanning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("데이터 불러오는 중...")
+                            } else {
+                                Text("선택 기간 불러오기 (${selectedDaysCount}일)")
                             }
                         }
                     }
@@ -353,6 +448,70 @@ fun SettingsSheet(
             item(key = "settings_bottom") {
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
+    }
+
+    if (showRangePicker) {
+        val todayUtcMillis = remember(todayKey) { DateUtils.dateKeyToUtcMillis(todayKey) }
+        val rangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = DateUtils.dateKeyToUtcMillis(batchStartKey),
+            initialSelectedEndDateMillis = DateUtils.dateKeyToUtcMillis(batchEndKey),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis <= todayUtcMillis
+            },
+        )
+        DatePickerDialog(
+            onDismissRequest = { showRangePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val sMillis = rangeState.selectedStartDateMillis
+                        val eMillis = rangeState.selectedEndDateMillis ?: sMillis
+                        if (sMillis != null && eMillis != null) {
+                            val sKey = DateUtils.utcMillisToDateKey(sMillis)
+                            val eKey = DateUtils.utcMillisToDateKey(eMillis)
+                            if (sKey <= eKey) {
+                                batchStartKey = sKey
+                                batchEndKey = eKey
+                            } else {
+                                batchStartKey = eKey
+                                batchEndKey = sKey
+                            }
+                        }
+                        showRangePicker = false
+                    },
+                    enabled = rangeState.selectedStartDateMillis != null,
+                ) {
+                    Text("적용")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRangePicker = false }) { Text("취소") }
+            },
+        ) {
+            DateRangePicker(
+                state = rangeState,
+                title = {
+                    Text(
+                        text = "불러올 시작일과 종료일 선택 (최대 180일)",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 12.dp),
+                    )
+                },
+                headline = {
+                    val sLabel = rangeState.selectedStartDateMillis?.let { DateUtils.utcMillisToDateKey(it) } ?: "시작일"
+                    val eLabel = rangeState.selectedEndDateMillis?.let { DateUtils.utcMillisToDateKey(it) } ?: "종료일"
+                    Text(
+                        text = "$sLabel ~ $eLabel",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(480.dp),
+            )
         }
     }
 

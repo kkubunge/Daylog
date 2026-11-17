@@ -28,6 +28,18 @@ class SmsSpamFilterTest {
         val parsedMerchant = SmsSpamFilter.parsePaymentDetail("15445163", merchantPayMsg)
         assertEquals(17800L, parsedMerchant.amountWon)
         assertEquals("바이탈에어코 · 17,800원", parsedMerchant.title)
+
+        // 고객님께 / 무료수신거부 문구가 하단에 섞인 정상 카드 승인 문자도 놓치지 않고 취합
+        val cardWithFooter = "홍길동 고객님께서 이용하신 [KB국민] 11/17 10:08 17,800원 일시불 바이탈에어코 무료수신거부"
+        assertFalse(SmsSpamFilter.isSpamOrNoiseSms("1588-1688", cardWithFooter))
+        assertTrue(SmsSpamFilter.isPaymentOrBankSms(cardWithFooter))
+        val parsedCard = SmsSpamFilter.parsePaymentDetail("15881688", cardWithFooter)
+        assertEquals(17800L, parsedCard.amountWon)
+        assertTrue(parsedCard.title.contains("17,800원"))
+
+        // 해외 승인 USD 포맷 인식 검증
+        val foreignMsg = "[현대카드] 해외승인 USD 12.50 11/17 스타벅스"
+        assertTrue(SmsSpamFilter.isPaymentOrBankSms(foreignMsg))
     }
 
     @Test

@@ -17,8 +17,19 @@ class DaylogNotificationListener : NotificationListenerService() {
 
     private val paymentAppKeywords = listOf(
         "spay", "kakaopay", "naverfin", "toss", "kbstar", "kbcard",
-        "shinhan", "hyundaicard", "samsungcard", "woori", "hanapay",
-        "hanabank", "nhcard", "nonghyup", "kakaobank", "kbank", "payco", "lottecard",
+        "shinhan", "shcard", "sbanking",
+        "hyundaicard", "samsungcard", "monimo", "smcard",
+        "woori", "hanapay", "hanabank", "hanaskcard", "kebhana",
+        "nhcard", "nonghyup", "nh.smart", "allone",
+        "bccard", "paybooc", "misp",
+        "kakaobank", "kbank", "payco", "lottecard", "lcac",
+        "ibk", "ionebank", "citi", "scbank", "mgcard",
+    )
+
+    private val smsBridgePackages = setOf(
+        "com.samsung.android.messaging",
+        "com.google.android.apps.messaging",
+        "com.android.mms",
     )
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -32,7 +43,6 @@ class DaylogNotificationListener : NotificationListenerService() {
 
         val platform = SnsPlatform.fromPackageName(pkg)
         val isPaymentApp = isKnownPaymentPackage(pkg)
-        if (platform == null && !isPaymentApp) return
 
         val notification = statusNotification.notification ?: return
         val flags = notification.flags
@@ -43,18 +53,30 @@ class DaylogNotificationListener : NotificationListenerService() {
         val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val plainText = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
-        val body = bigText.ifBlank { plainText }
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotBlank() } }
+            ?.joinToString(" ")
+            .orEmpty()
+        val body = listOf(bigText, plainText, textLines).firstOrNull { it.isNotBlank() }.orEmpty()
 
-        if (rawTitle.isBlank() || body.isBlank()) return
+        if (body.isBlank()) return
         if (isSystemNoiseNotification(body)) return
+        val combinedText = if (rawTitle.isNotBlank()) "$rawTitle $body" else body
+
+        // 알려진 카드/페이 앱이 아니더라도 비문자 일반 앱 알림이 명확한 결제 문구면 함께 포착
+        val isStrongPaymentText = SmsSpamFilter.isPaymentOrBankSms(combinedText) ||
+            (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(combinedText) > 0L)
+        if (platform == null && !isPaymentApp && (!isStrongPaymentText || pkg in smsBridgePackages)) {
+            return
+        }
 
         val postTime = statusNotification.postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
         val dateKey = DateUtils.dateKeyFromMs(postTime)
-        val cleanTitle = rawTitle.take(32)
+        val cleanTitle = rawTitle.ifBlank { "카드/페이 알림" }.take(32)
 
         // 결제/금융 앱이거나 알림 내용이 결제·입출금 형식이면 별도 결제(PAYMENT) 항목으로 분류
-        val isPaymentNotif = (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(body) > 0L) ||
-            SmsSpamFilter.isPaymentOrBankSms(body)
+        val isPaymentNotif = (isPaymentApp && SmsSpamFilter.extractPrimaryWonAmount(combinedText) > 0L) ||
+            SmsSpamFilter.isPaymentOrBankSms(combinedText)
 
         if (isPaymentNotif) {
             if (!collectPayments) return

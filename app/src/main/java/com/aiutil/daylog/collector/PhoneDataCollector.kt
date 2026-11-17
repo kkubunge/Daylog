@@ -114,6 +114,7 @@ class PhoneDataCollector(
                 targetKeys = targetSet,
                 excludeScreenshots = settings.excludeScreenshots,
                 extractGps = settings.extractPhotoGps,
+                maxExifReads = (targetSet.size * 15).coerceIn(MAX_EXIF_READ_PER_SCAN, 450),
             )
         } else {
             emptyMap()
@@ -133,6 +134,20 @@ class PhoneDataCollector(
 
         val smsMap = if ((settings.collectSms || settings.collectPayments) && hasSmsPermission()) {
             querySmsLogs(
+                startMs = startMs,
+                endMs = endMs,
+                targetKeys = targetSet,
+                collectSms = settings.collectSms,
+                collectPayments = settings.collectPayments,
+                filterSpam = settings.filterSpamSms,
+                contactCache = contactCache,
+            )
+        } else {
+            emptyMap()
+        }
+
+        val mmsMap = if ((settings.collectSms || settings.collectPayments) && hasSmsPermission()) {
+            queryMmsLogs(
                 startMs = startMs,
                 endMs = endMs,
                 targetKeys = targetSet,
@@ -175,6 +190,7 @@ class PhoneDataCollector(
                 manualNotes +
                     callsMap[key].orEmpty() +
                     smsMap[key].orEmpty() +
+                    mmsMap[key].orEmpty() +
                     notifMap[key].orEmpty()
                 )
                 .distinctBy { it.id }
@@ -236,6 +252,7 @@ class PhoneDataCollector(
         targetKeys: Set<String>,
         excludeScreenshots: Boolean,
         extractGps: Boolean,
+        maxExifReads: Int = MAX_EXIF_READ_PER_SCAN,
     ): Map<String, List<DayPhoto>> {
         val result = mutableMapOf<String, MutableList<DayPhoto>>()
         val projection = arrayOf(
@@ -307,7 +324,7 @@ class PhoneDataCollector(
                     var osmCategoryHint = ""
                     var address = ""
 
-                    if (canReadExifLocation && !isShot && exifAnalyzedCount < MAX_EXIF_READ_PER_SCAN) {
+                    if (canReadExifLocation && !isShot && exifAnalyzedCount < maxExifReads) {
                         val latLng = extractExifLatLong(uri)
                         exifAnalyzedCount++
                         if (latLng != null) {
@@ -587,13 +604,14 @@ class PhoneDataCollector(
                     if (msgType != Telephony.Sms.MESSAGE_TYPE_INBOX && msgType != Telephony.Sms.MESSAGE_TYPE_SENT) {
                         continue
                     }
-                    if (filterSpam && SmsSpamFilter.isSpamOrNoiseSms(address, body)) continue
 
                     val dateKey = DateUtils.dateKeyFromMs(dateMs)
                     if (dateKey !in targetKeys) continue
 
-                    val personName = resolvePersonName("", address, contactCache)
                     val isPayment = SmsSpamFilter.isPaymentOrBankSms(body)
+                    if (!isPayment && filterSpam && SmsSpamFilter.isSpamOrNoiseSms(address, body)) continue
+
+                    val personName = resolvePersonName("", address, contactCache)
 
                     if (isPayment) {
                         if (!collectPayments) continue
@@ -631,6 +649,162 @@ class PhoneDataCollector(
             }
         }
         return result
+    }
+
+    /**
+     * LMS/MMS(장문 카드 승인·안내 문자 포함) 본문과 발신번호를 조회한다.
+     * Android Telephony.Mms.DATE는 초(seconds) 단위로 저장된다.
+     */
+    private fun queryMmsLogs(
+        startMs: Long,
+        endMs: Long,
+        targetKeys: Set<String>,
+        collectSms: Boolean,
+        collectPayments: Boolean,
+        filterSpam: Boolean,
+        contactCache: MutableMap<String, String>,
+    ): Map<String, List<ActivityItem>> {
+        val result = mutableMapOf<String, MutableList<ActivityItem>>()
+        val startSec = startMs / 1000L
+        val endSec = endMs / 1000L
+        val projection = arrayOf(
+            Telephony.Mms._ID,
+            Telephony.Mms.DATE,
+            Telephony.Mms.MESSAGE_BOX,
+        )
+        val selection = "${Telephony.Mms.DATE} BETWEEN ? AND ?"
+        val args = arrayOf(startSec.toString(), endSec.toString())
+        val sortOrder = "${Telephony.Mms.DATE} ASC"
+
+        runCatching {
+            context.contentResolver.query(
+                Telephony.Mms.CONTENT_URI,
+                projection,
+                selection,
+                args,
+                sortOrder,
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(Telephony.Mms._ID)
+                val dateIdx = cursor.getColumnIndex(Telephony.Mms.DATE)
+                val boxIdx = cursor.getColumnIndex(Telephony.Mms.MESSAGE_BOX)
+
+                while (cursor.moveToNext()) {
+                    val mmsId = if (idIdx >= 0) cursor.getLong(idIdx) else 0L
+                    val rawDateSec = if (dateIdx >= 0) cursor.getLong(dateIdx) else 0L
+                    val msgBox = if (boxIdx >= 0) cursor.getInt(boxIdx) else Telephony.Mms.MESSAGE_BOX_INBOX
+                    if (msgBox != Telephony.Mms.MESSAGE_BOX_INBOX && msgBox != Telephony.Mms.MESSAGE_BOX_SENT) {
+                        continue
+                    }
+
+                    val dateMs = if (rawDateSec in 1L..9_999_999_999L) rawDateSec * 1000L else rawDateSec
+                    val dateKey = DateUtils.dateKeyFromMs(dateMs)
+                    if (dateKey !in targetKeys) continue
+
+                    val body = readMmsPlainText(mmsId)
+                    if (body.isBlank()) continue
+                    val address = readMmsSenderAddress(mmsId)
+
+                    val isPayment = SmsSpamFilter.isPaymentOrBankSms(body)
+                    if (!isPayment && filterSpam && SmsSpamFilter.isSpamOrNoiseSms(address, body)) continue
+
+                    val personName = resolvePersonName("", address, contactCache)
+                    if (isPayment) {
+                        if (!collectPayments) continue
+                        val parsed = SmsSpamFilter.parsePaymentDetail(personName, body)
+                        result.getOrPut(dateKey) { mutableListOf() }.add(
+                            ActivityItem(
+                                id = "pay_mms_${mmsId}_$dateMs",
+                                dateKey = dateKey,
+                                timestampMs = dateMs,
+                                type = ActivityType.PAYMENT,
+                                title = parsed.title,
+                                detail = parsed.detail,
+                                amountWon = parsed.amountWon,
+                            )
+                        )
+                    } else if (collectSms) {
+                        val title = if (msgBox == Telephony.Mms.MESSAGE_BOX_SENT) {
+                            "$personName (발신)"
+                        } else {
+                            personName
+                        }
+                        result.getOrPut(dateKey) { mutableListOf() }.add(
+                            ActivityItem(
+                                id = "mms_${mmsId}_$dateMs",
+                                dateKey = dateKey,
+                                timestampMs = dateMs,
+                                type = ActivityType.SMS,
+                                title = title,
+                                detail = SmsSpamFilter.cleanSmsSummary(body, 64),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return result
+    }
+
+    private fun readMmsPlainText(mmsId: Long): String {
+        val sb = StringBuilder()
+        runCatching {
+            val partUri = Uri.parse("content://mms/part")
+            context.contentResolver.query(
+                partUri,
+                arrayOf("_id", "ct", "_data", "text"),
+                "mid = ?",
+                arrayOf(mmsId.toString()),
+                null,
+            )?.use { c ->
+                val idIdx = c.getColumnIndex("_id")
+                val ctIdx = c.getColumnIndex("ct")
+                val dataIdx = c.getColumnIndex("_data")
+                val textIdx = c.getColumnIndex("text")
+                while (c.moveToNext()) {
+                    val ct = if (ctIdx >= 0) c.getString(ctIdx).orEmpty() else ""
+                    if (ct != "text/plain") continue
+                    val dataPath = if (dataIdx >= 0) c.getString(dataIdx) else null
+                    val partText = if (!dataPath.isNullOrBlank()) {
+                        val partId = if (idIdx >= 0) c.getString(idIdx) else ""
+                        context.contentResolver.openInputStream(Uri.parse("content://mms/part/$partId"))
+                            ?.bufferedReader(Charsets.UTF_8)
+                            ?.use { it.readText() }
+                            .orEmpty()
+                    } else if (textIdx >= 0) {
+                        c.getString(textIdx).orEmpty()
+                    } else {
+                        ""
+                    }
+                    if (partText.isNotBlank()) {
+                        if (sb.isNotEmpty()) sb.append(' ')
+                        sb.append(partText.trim())
+                    }
+                }
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun readMmsSenderAddress(mmsId: Long): String {
+        return runCatching {
+            val addrUri = Uri.parse("content://mms/$mmsId/addr")
+            context.contentResolver.query(
+                addrUri,
+                arrayOf("address", "type"),
+                "type = 137",
+                null,
+                null,
+            )?.use { c ->
+                val addrIdx = c.getColumnIndex("address")
+                while (c.moveToNext()) {
+                    val raw = if (addrIdx >= 0) c.getString(addrIdx).orEmpty().trim() else ""
+                    if (raw.isNotBlank() && raw != "insert-address-token") {
+                        return@use raw
+                    }
+                }
+                ""
+            }.orEmpty()
+        }.getOrDefault("")
     }
 
     private fun resolvePersonName(

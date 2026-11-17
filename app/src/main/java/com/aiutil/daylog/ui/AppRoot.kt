@@ -183,7 +183,7 @@ fun AppRoot(
         }
     }
 
-    fun batchScanRecentDays(days: Int) {
+    fun batchScanDateRange(startDateKey: String, endDateKey: String) {
         if (!permissionStatus.anyDataGranted && !permissionStatus.snsNotificationEnabled) {
             onRequestRuntimePermissions()
             return
@@ -192,7 +192,8 @@ fun AppRoot(
         scope.launch {
             isScanning = true
             try {
-                val keys = (0 until days).map { DateUtils.daysAgoKey(todayKey, it) }
+                val keys = DateUtils.dateKeysBetween(startDateKey, endDateKey, maxDays = 180)
+                if (keys.isEmpty()) return@launch
                 val existingMap = records.associateBy { it.dateKey }
                 val scanned = App.collector.collectBatch(keys, existingMap, settings)
                 val nonEmpty = scanned.filter { it.hasAnyData }
@@ -200,7 +201,14 @@ fun AppRoot(
                     App.daylogs.upsertAll(nonEmpty)
                 }
                 autoScannedDates = autoScannedDates + keys
-                snackbarHostState.showSnackbar("최근 ${days}일 중 ${nonEmpty.size}일의 데이터를 불러왔습니다.")
+                val paymentCount = nonEmpty.sumOf { rec ->
+                    rec.activities.count { it.type == ActivityType.PAYMENT }
+                }
+                val fromLabel = keys.last()
+                val toLabel = keys.first()
+                snackbarHostState.showSnackbar(
+                    "$fromLabel ~ $toLabel (${keys.size}일 중 ${nonEmpty.size}일 수집 · 결제 ${paymentCount}건)"
+                )
             } finally {
                 isScanning = false
             }
@@ -654,6 +662,7 @@ fun AppRoot(
 
     if (showSettings) {
         SettingsSheet(
+            todayKey = todayKey,
             settings = settings,
             permissionStatus = permissionStatus,
             isTrackingRunning = isTrackingRunning,
@@ -665,7 +674,7 @@ fun AppRoot(
                 runCatching { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
             },
             onToggleTrackingService = { toggleLocationTracking() },
-            onBatchScanDays = { days -> batchScanRecentDays(days) },
+            onBatchScanRange = { startKey, endKey -> batchScanDateRange(startKey, endKey) },
             onUpdateSettings = { transform -> App.settings.update(transform) },
             onExportJsonBackup = { scope.launch { shareBackupJson(context) } },
             onClearAllRecords = {
