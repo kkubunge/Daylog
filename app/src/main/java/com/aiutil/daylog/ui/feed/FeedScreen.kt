@@ -312,55 +312,23 @@ fun FeedScreen(
                         )
 
                         if (rec.places.isNotEmpty()) {
-                            val routeText = rec.places.joinToString(" → ") { it.placeName }
-                            Text(
-                                text = "경로: $routeText",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-
-                        // 일별 요약 (AI 브리핑 우선, 없을 때는 당일 핵심 활동·장소·결제 자동 요약)
-                        val daySummaryText = remember(rec) { buildFeedDaySummary(rec) }
-                        if (daySummaryText.isNotBlank()) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(13.dp),
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = if (rec.aiSummary.isNotBlank()) "일별 AI 요약" else "일별 요약",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                    Text(
-                                        text = daySummaryText,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 4,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                            val visitNames = rec.places
+                                .map { it.nearbyPoi.ifBlank { it.placeName } }
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .joinToString(", ")
+                            if (visitNames.isNotBlank()) {
+                                Text(
+                                    text = "방문: $visitNames",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
 
-                        // 일별 요약 밑에 메모(간단 메모 + 구글 달력 일정) 표시
+                        // 메모(간단 메모 + 구글 달력 일정) 표시
                         val noteItems = remember(rec.activities) {
                             rec.activities.filter { it.type == ActivityType.NOTE }
                         }
@@ -443,35 +411,4 @@ fun FeedScreen(
             }
         }
     }
-}
-
-private fun buildFeedDaySummary(rec: DayRecord): String {
-    if (rec.aiSummary.isNotBlank()) return rec.aiSummary.trim()
-
-    val nonNote = rec.activities.filter { it.type != ActivityType.NOTE }
-    val parts = buildList {
-        if (rec.places.isNotEmpty()) {
-            val placeNames = rec.places
-                .map { it.nearbyPoi.ifBlank { it.placeName } }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .take(3)
-            if (placeNames.isNotEmpty()) {
-                add("방문 ${placeNames.joinToString(", ")}")
-            }
-        }
-        val payItems = nonNote.filter { it.type == ActivityType.PAYMENT }
-        if (payItems.isNotEmpty()) {
-            val wonText = if (rec.totalPaymentWon > 0L) SmsSpamFilter.formatWon(rec.totalPaymentWon) else "${payItems.size}건"
-            add("결제 ${payItems.size}건($wonText)")
-        }
-        val callCount = nonNote.count { it.type == ActivityType.CALL }
-        if (callCount > 0) add("통화 ${callCount}건")
-        val smsCount = nonNote.count { it.type == ActivityType.SMS }
-        if (smsCount > 0) add("문자 ${smsCount}건")
-        val snsCount = nonNote.count { it.type == ActivityType.SNS }
-        if (snsCount > 0) add("SNS ${snsCount}건")
-        if (rec.photos.isNotEmpty()) add("사진 ${rec.photos.size}장")
-    }
-    return parts.joinToString(" · ")
 }
