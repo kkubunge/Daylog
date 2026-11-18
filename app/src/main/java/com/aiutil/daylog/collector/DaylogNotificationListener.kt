@@ -89,7 +89,9 @@ class DaylogNotificationListener : NotificationListenerService() {
             return
         }
 
-        if (platform == null || pkg in smsBridgePackages || !collectSns) return
+        if (platform == null || pkg in smsBridgePackages) return
+        val snsAllowed = settings?.isSnsContentAllowed(platform, cleanTitle, body) ?: collectSns
+        if (!snsAllowed) return
         val cleanDetail = cleanBody(body, 72)
         val item = ActivityItem(
             id = "sns_${platform.name}_${postTime}_${(cleanTitle + cleanDetail).hashCode()}",

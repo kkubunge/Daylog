@@ -183,8 +183,15 @@ class PhoneDataCollector(
         val notifMap = if (settings.collectSns || settings.collectPayments) {
             snsCaptureStore.itemsByDateRange(targetSet).mapValues { (_, list) ->
                 list.filter { item ->
-                    (item.type == ActivityType.PAYMENT && settings.collectPayments) ||
-                        (item.type != ActivityType.PAYMENT && settings.collectSns)
+                    if (item.type == ActivityType.PAYMENT) {
+                        settings.collectPayments
+                    } else {
+                        settings.isSnsContentAllowed(
+                            platform = item.snsPlatform,
+                            title = item.title,
+                            body = item.fullText.ifBlank { item.detail },
+                        )
+                    }
                 }
             }
         } else {

@@ -20,16 +20,24 @@ enum class ActivityType(val label: String) {
  * 알림 리스너로 자동 포착하는 주요 SNS/메신저 플랫폼.
  */
 @Serializable
-enum class SnsPlatform(val displayName: String, val packageName: String) {
-    KAKAOTALK("카카오톡", "com.kakao.talk"),
+enum class SnsPlatform(
+    val displayName: String,
+    val packageName: String,
+    val isMessenger: Boolean = false,
+) {
+    KAKAOTALK("카카오톡", "com.kakao.talk", isMessenger = true),
     INSTAGRAM("인스타그램", "com.instagram.android"),
     THREADS("스레드", "com.instagram.barcelona"),
-    TELEGRAM("텔레그램", "org.telegram.messenger"),
-    DISCORD("디스코드", "com.discord"),
-    LINE("라인", "jp.naver.line.android"),
+    TELEGRAM("텔레그램", "org.telegram.messenger", isMessenger = true),
+    DISCORD("디스코드", "com.discord", isMessenger = true),
+    LINE("라인", "jp.naver.line.android", isMessenger = true),
     X_TWITTER("X(트위터)", "com.twitter.android"),
     FACEBOOK("페이스북", "com.facebook.katana"),
+    MESSENGER("페북 메신저", "com.facebook.orca", isMessenger = true),
     YOUTUBE("유튜브", "com.google.android.youtube"),
+    BAND("네이버 밴드", "com.nhn.android.band"),
+    WHATSAPP("왓츠앱", "com.whatsapp", isMessenger = true),
+    SLACK("슬랙", "com.Slack", isMessenger = true),
     OTHER("기타 SNS", "");
 
     companion object {
@@ -41,10 +49,15 @@ enum class SnsPlatform(val displayName: String, val packageName: String) {
             } ?: when {
                 normalized.contains("twitter") || normalized.contains("x.android") -> X_TWITTER
                 normalized.contains("telegram") -> TELEGRAM
-                normalized.contains("kakao") -> KAKAOTALK
+                normalized.contains("kakao.talk") || (normalized.contains("kakao") && !normalized.contains("pay") && !normalized.contains("bank")) -> KAKAOTALK
                 normalized.contains("instagram") -> INSTAGRAM
                 normalized.contains("threads") || normalized.contains("barcelona") -> THREADS
-                normalized.contains("facebook.orca") -> OTHER
+                normalized.contains("facebook.orca") -> MESSENGER
+                normalized.contains("nhn.android.band") || normalized.endsWith(".band") -> BAND
+                normalized.contains("whatsapp") -> WHATSAPP
+                normalized.contains("slack") -> SLACK
+                normalized.contains("discord") -> DISCORD
+                normalized.contains("youtube") -> YOUTUBE
                 else -> null
             }
         }
@@ -221,6 +234,8 @@ data class DaylogSettings(
     val collectSms: Boolean = true,
     val filterSpamSms: Boolean = true,
     val collectSns: Boolean = true,
+    val disabledSnsPlatforms: Set<String> = emptySet(),
+    val snsExcludeKeywords: String = "",
     val collectCalendar: Boolean = true,
     val trackLocation: Boolean = true,
     val extractPhotoGps: Boolean = true,
@@ -235,7 +250,22 @@ data class DaylogSettings(
     val autoScanChunkDays: Int = 100,
     val autoScanStepBackDaily: Boolean = true,
     val autoScanCursorEndKey: String = "",
-)
+) {
+    fun isSnsPlatformEnabled(platform: SnsPlatform): Boolean {
+        return collectSns && platform.name !in disabledSnsPlatforms
+    }
+
+    fun isSnsContentAllowed(platform: SnsPlatform, title: String, body: String): Boolean {
+        if (!isSnsPlatformEnabled(platform)) return false
+        val keywords = snsExcludeKeywords
+            .split(",", "\n")
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+        if (keywords.isEmpty()) return true
+        val combined = "$title $body".lowercase()
+        return keywords.none { combined.contains(it) }
+    }
+}
 
 /**
  * 날짜별 스캔 상태 (설정 내 스캔 성공 여부 달력 표시용).

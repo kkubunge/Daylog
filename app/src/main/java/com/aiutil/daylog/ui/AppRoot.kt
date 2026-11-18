@@ -514,9 +514,20 @@ fun AppRoot(
         }
     }
 
-    // SNS 알림 수신 시 오늘 날짜 활동에 즉시 반영
+    // SNS·결제 알림 수신 시 오늘 날짜 활동에 즉시 반영 (설정된 SNS 플랫폼·키워드 기준)
     LaunchedEffect(snsCaptures.firstOrNull()?.id, snsCaptures.size, todayKey) {
-        val todaySns = snsCaptures.filter { it.dateKey == todayKey }
+        val todaySns = snsCaptures.filter { item ->
+            if (item.dateKey != todayKey) return@filter false
+            if (item.type == ActivityType.PAYMENT) {
+                settings.collectPayments
+            } else {
+                settings.isSnsContentAllowed(
+                    platform = item.snsPlatform,
+                    title = item.title,
+                    body = item.fullText.ifBlank { item.detail },
+                )
+            }
+        }
         if (todaySns.isEmpty()) return@LaunchedEffect
         val existingIds = App.daylogs.getRecord(todayKey)?.activities.orEmpty().map { it.id }.toSet()
         todaySns.filter { it.id !in existingIds }.forEach { item ->

@@ -1,5 +1,7 @@
 package com.aiutil.daylog.collector
 
+import com.aiutil.daylog.model.DaylogSettings
+import com.aiutil.daylog.model.SnsPlatform
 import com.aiutil.daylog.util.DateUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,5 +41,24 @@ class PhoneDataCollectorHelperTest {
             targetKeys = targetKeys,
         )
         assertEquals(listOf("2026-11-18", "2026-11-19", "2026-11-20"), multiAllDay)
+    }
+
+    @Test
+    fun `SNS 플랫폼별 수신 설정과 제외 키워드에 따라 알림을 정확히 구분한다`() {
+        assertEquals(SnsPlatform.KAKAOTALK, SnsPlatform.fromPackageName("com.kakao.talk"))
+        assertEquals(SnsPlatform.MESSENGER, SnsPlatform.fromPackageName("com.facebook.orca"))
+        assertEquals(SnsPlatform.BAND, SnsPlatform.fromPackageName("com.nhn.android.band"))
+        assertEquals(null, SnsPlatform.fromPackageName("com.kakaopay.app"))
+
+        val settings = DaylogSettings(
+            collectSns = true,
+            disabledSnsPlatforms = setOf(SnsPlatform.YOUTUBE.name, SnsPlatform.INSTAGRAM.name),
+            snsExcludeKeywords = "오픈채팅, 이벤트",
+        )
+        assertTrue(settings.isSnsContentAllowed(SnsPlatform.KAKAOTALK, "홍길동", "저녁 7시에 봬요"))
+        assertFalse(settings.isSnsContentAllowed(SnsPlatform.YOUTUBE, "구독 채널", "새 영상이 업로드됨"))
+        assertFalse(settings.isSnsContentAllowed(SnsPlatform.INSTAGRAM, "인스타", "좋아요를 눌렀습니다"))
+        assertFalse(settings.isSnsContentAllowed(SnsPlatform.KAKAOTALK, "오픈채팅 알림", "공지사항"))
+        assertFalse(settings.copy(collectSns = false).isSnsContentAllowed(SnsPlatform.KAKAOTALK, "홍길동", "안녕하세요"))
     }
 }

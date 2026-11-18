@@ -73,6 +73,7 @@ import com.aiutil.daylog.model.DaylogSettings
 import com.aiutil.daylog.model.PermissionStatus
 import com.aiutil.daylog.model.SavedPlaceAlias
 import com.aiutil.daylog.model.ScheduledRunLog
+import com.aiutil.daylog.model.SnsPlatform
 import com.aiutil.daylog.util.DateUtils
 import java.util.Locale
 
@@ -107,6 +108,11 @@ private enum class SettingsSubPage(
         group = SettingsGroup.DATA_AND_PLACES,
         title = "수집 항목 설정",
         description = "사진 · 결제 · 통화 · 문자 · 구글 달력 · SNS",
+    ),
+    SNS_SETTINGS(
+        group = SettingsGroup.DATA_AND_PLACES,
+        title = "SNS 알림 구분",
+        description = "카카오톡 · 인스타 · 유튜브 등 앱별 수신 및 제외 키워드",
     ),
     BATCH_AND_HISTORY(
         group = SettingsGroup.DATA_AND_PLACES,
@@ -298,6 +304,18 @@ fun SettingsSheet(
                                 CollectionItemsSubPage(
                                     settings = settings,
                                     onUpdateSettings = onUpdateSettings,
+                                    onOpenSnsSettings = { activePage = SettingsSubPage.SNS_SETTINGS },
+                                )
+                            }
+                        }
+
+                        SettingsSubPage.SNS_SETTINGS -> {
+                            item(key = "sub_sns") {
+                                SnsSettingsSubPage(
+                                    settings = settings,
+                                    snsNotificationEnabled = permissionStatus.snsNotificationEnabled,
+                                    onUpdateSettings = onUpdateSettings,
+                                    onOpenNotificationListenerSettings = onOpenNotificationListenerSettings,
                                 )
                             }
                         }
@@ -603,6 +621,16 @@ private fun buildSubPageSummary(
             "${enabledCount}/6 항목 켜짐"
         }
 
+        SettingsSubPage.SNS_SETTINGS -> {
+            if (!settings.collectSns) {
+                "전체 꺼짐"
+            } else {
+                val total = SnsPlatform.entries.size
+                val enabled = SnsPlatform.entries.count { settings.isSnsPlatformEnabled(it) }
+                "${enabled}/${total} 앱"
+            }
+        }
+
         SettingsSubPage.BATCH_AND_HISTORY -> {
             if (isBatchScanning) "불러오는 중..." else "이력 ${scanLogsByDate.size}일"
         }
@@ -857,6 +885,7 @@ private fun GpsTrackingSubPage(
 private fun CollectionItemsSubPage(
     settings: DaylogSettings,
     onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
+    onOpenSnsSettings: () -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -909,11 +938,236 @@ private fun CollectionItemsSubPage(
                 checked = settings.collectSns,
                 onCheckedChange = { v -> onUpdateSettings { it.copy(collectSns = v) } },
             )
+            OutlinedButton(
+                onClick = onOpenSnsSettings,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("SNS 앱별 구분 설정 (카톡·인스타·유튜브 등)")
+            }
             SettingSwitchRow(
                 title = "구글 달력 일정 연동 (달력 · 메모 표시)",
                 checked = settings.collectCalendar,
                 onCheckedChange = { v -> onUpdateSettings { it.copy(collectCalendar = v) } },
             )
+        }
+    }
+}
+
+@Composable
+private fun SnsSettingsSubPage(
+    settings: DaylogSettings,
+    snsNotificationEnabled: Boolean,
+    onUpdateSettings: ((DaylogSettings) -> DaylogSettings) -> Unit,
+    onOpenNotificationListenerSettings: () -> Unit,
+) {
+    var excludeDraft by remember(settings.snsExcludeKeywords) {
+        mutableStateOf(settings.snsExcludeKeywords)
+    }
+    val (messengerApps, socialApps) = remember {
+        SnsPlatform.entries.partition { it.isMessenger }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (!snsNotificationEnabled) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "SNS 알림 접근 권한이 꺼져 있습니다",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "아래 버튼을 눌러 데이로그의 알림 접근 권한을 허용해야 선택한 SNS 알림을 받을 수 있습니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onOpenNotificationListenerSettings,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("SNS 알림 접근 설정 열기")
+                    }
+                }
+            }
+        }
+
+        // 1. 전체 수신 여부 + 빠른 구분 선택
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingSwitchRow(
+                    title = "SNS 알림 전체 수신",
+                    checked = settings.collectSns,
+                    onCheckedChange = { enabled ->
+                        onUpdateSettings { it.copy(collectSns = enabled) }
+                    },
+                )
+                HorizontalDivider()
+                Text(
+                    text = "빠른 구분 선택",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    FilterChip(
+                        selected = settings.collectSns && settings.disabledSnsPlatforms.isEmpty(),
+                        onClick = {
+                            onUpdateSettings {
+                                it.copy(collectSns = true, disabledSnsPlatforms = emptySet())
+                            }
+                        },
+                        label = { Text("전체 앱 허용") },
+                    )
+                    val nonMessengerNames = remember {
+                        SnsPlatform.entries.filterNot { it.isMessenger }.map { it.name }.toSet()
+                    }
+                    FilterChip(
+                        selected = settings.collectSns && settings.disabledSnsPlatforms == nonMessengerNames,
+                        onClick = {
+                            onUpdateSettings {
+                                it.copy(collectSns = true, disabledSnsPlatforms = nonMessengerNames)
+                            }
+                        },
+                        label = { Text("메신저만 받기") },
+                    )
+                    FilterChip(
+                        selected = !settings.collectSns,
+                        onClick = {
+                            onUpdateSettings { it.copy(collectSns = false) }
+                        },
+                        label = { Text("모두 끄기") },
+                    )
+                }
+            }
+        }
+
+        // 2. 메신저 앱별 수신 설정
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("메신저 앱", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                messengerApps.forEach { platform ->
+                    SettingSwitchRow(
+                        title = platform.displayName,
+                        checked = settings.isSnsPlatformEnabled(platform),
+                        onCheckedChange = { checked ->
+                            onUpdateSettings { cur ->
+                                val nextDisabled = if (checked) {
+                                    cur.disabledSnsPlatforms - platform.name
+                                } else {
+                                    cur.disabledSnsPlatforms + platform.name
+                                }
+                                cur.copy(
+                                    collectSns = if (checked) true else cur.collectSns,
+                                    disabledSnsPlatforms = nextDisabled,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
+
+        // 3. 소셜 · 커뮤니티 앱별 수신 설정
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("소셜 · 커뮤니티", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                socialApps.forEach { platform ->
+                    SettingSwitchRow(
+                        title = platform.displayName,
+                        checked = settings.isSnsPlatformEnabled(platform),
+                        onCheckedChange = { checked ->
+                            onUpdateSettings { cur ->
+                                val nextDisabled = if (checked) {
+                                    cur.disabledSnsPlatforms - platform.name
+                                } else {
+                                    cur.disabledSnsPlatforms + platform.name
+                                }
+                                cur.copy(
+                                    collectSns = if (checked) true else cur.collectSns,
+                                    disabledSnsPlatforms = nextDisabled,
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
+
+        // 4. 제외 키워드 설정
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("SNS 제외 키워드 (선택)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "특정 단톡방 이름이나 광고 문구 등을 쉼표(,)로 구분해 넣으면 해당 알림은 기록하지 않습니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = excludeDraft,
+                    onValueChange = { excludeDraft = it },
+                    label = { Text("제외할 단어 (예: 오픈채팅, 광고, 이벤트)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Button(
+                        onClick = {
+                            onUpdateSettings { it.copy(snsExcludeKeywords = excludeDraft.trim()) }
+                        },
+                    ) {
+                        Text("키워드 저장")
+                    }
+                }
+            }
         }
     }
 }
