@@ -99,11 +99,6 @@ private enum class SettingsSubPage(
         title = "GPS 설정",
         description = "백그라운드 자동 기록 · 확인 주기 · 체류 시간 기준",
     ),
-    SCHEDULED_SCAN(
-        group = SettingsGroup.AUTO_RECORD,
-        title = "예약 불러오기 설정",
-        description = "지정 시각 과거 내역 자동 백그라운드 수집",
-    ),
     COLLECTION_ITEMS(
         group = SettingsGroup.DATA_AND_PLACES,
         title = "수집 항목 설정",
@@ -116,8 +111,8 @@ private enum class SettingsSubPage(
     ),
     BATCH_AND_HISTORY(
         group = SettingsGroup.DATA_AND_PLACES,
-        title = "과거 불러오기 · 이력",
-        description = "기간 선택 일괄 스캔 및 수집 성공 여부 달력",
+        title = "과거 · 예약 불러오기",
+        description = "기간 선택 즉시 스캔 · 매일 자동 예약 · 성공 이력",
     ),
     PLACE_ALIASES(
         group = SettingsGroup.DATA_AND_PLACES,
@@ -288,17 +283,6 @@ fun SettingsSheet(
                             }
                         }
 
-                        SettingsSubPage.SCHEDULED_SCAN -> {
-                            item(key = "sub_sched") {
-                                ScheduledAutoScanCard(
-                                    todayKey = todayKey,
-                                    settings = settings,
-                                    onUpdateSettings = onUpdateSettings,
-                                    onRunScheduledScanNow = onRunScheduledScanNow,
-                                )
-                            }
-                        }
-
                         SettingsSubPage.COLLECTION_ITEMS -> {
                             item(key = "sub_collect") {
                                 CollectionItemsSubPage(
@@ -333,6 +317,14 @@ fun SettingsSheet(
                                     },
                                     onOpenRangePicker = { showRangePicker = true },
                                     onBatchScanRange = onBatchScanRange,
+                                )
+                            }
+                            item(key = "sub_sched") {
+                                ScheduledAutoScanCard(
+                                    todayKey = todayKey,
+                                    settings = settings,
+                                    onUpdateSettings = onUpdateSettings,
+                                    onRunScheduledScanNow = onRunScheduledScanNow,
                                 )
                             }
                             item(key = "sub_scan_calendar") {
@@ -601,14 +593,6 @@ private fun buildSubPageSummary(
             "$status · 체류 ${settings.stayThresholdMin}분"
         }
 
-        SettingsSubPage.SCHEDULED_SCAN -> {
-            if (settings.autoScanEnabled) {
-                String.format(Locale.US, "켜짐 · 매일 %02d:%02d", settings.autoScanHour, settings.autoScanMinute)
-            } else {
-                "꺼짐"
-            }
-        }
-
         SettingsSubPage.COLLECTION_ITEMS -> {
             val enabledCount = listOf(
                 settings.collectPhotos,
@@ -632,7 +616,17 @@ private fun buildSubPageSummary(
         }
 
         SettingsSubPage.BATCH_AND_HISTORY -> {
-            if (isBatchScanning) "불러오는 중..." else "이력 ${scanLogsByDate.size}일"
+            when {
+                isBatchScanning -> "불러오는 중..."
+                settings.autoScanEnabled -> String.format(
+                    Locale.US,
+                    "예약 %02d:%02d · 이력 %d일",
+                    settings.autoScanHour,
+                    settings.autoScanMinute,
+                    scanLogsByDate.size,
+                )
+                else -> "예약 꺼짐 · 이력 ${scanLogsByDate.size}일"
+            }
         }
 
         SettingsSubPage.PLACE_ALIASES -> {
